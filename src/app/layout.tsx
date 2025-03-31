@@ -1,6 +1,10 @@
+// app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Nunito_Sans } from "next/font/google";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../lib/auth";
+import { NextAuthProvider } from "./components/auth/providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,8 +23,8 @@ const nunitoSans = Nunito_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Consistent - Profile Generator",
-  description: "Access comprehensive verification and KYC APIs",
+  title: "Admin Dashboard",
+  description: "Comprehensive admin dashboard for company management",
   icons: {
     icon: [
       { url: "/favicon.ico" },
@@ -38,17 +42,19 @@ export const metadata: Metadata = {
   manifest: "/site.webmanifest",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await getServerSession(authOptions);
+
   return (
     <html lang="en" className="h-full bg-gray-50">
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${nunitoSans.variable} antialiased h-full font-nunito`}
       >
-        {children}
+        <NextAuthProvider session={session}>{children}</NextAuthProvider>
       </body>
     </html>
   );
