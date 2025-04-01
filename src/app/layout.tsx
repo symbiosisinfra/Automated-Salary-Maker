@@ -6,6 +6,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../lib/auth";
 import { NextAuthProvider } from "./components/auth/providers";
 import "./globals.css";
+import { Toaster } from "react-hot-toast";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,8 +24,9 @@ const nunitoSans = Nunito_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Admin Dashboard",
-  description: "Comprehensive admin dashboard for company management",
+  title: "Admin Dashboard | Symbiosis Infra",
+  description:
+    "Comprehensive admin dashboard for Symbiosis Infra Private Limited",
   icons: {
     icon: [
       { url: "/favicon.ico" },
@@ -55,6 +57,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${nunitoSans.variable} antialiased h-full font-nunito`}
       >
         <NextAuthProvider session={session}>{children}</NextAuthProvider>
+        <Toaster />
       </body>
     </html>
   );

@@ -16,12 +16,13 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCircle,
+  XCircle,
+  Clock,
   AlertTriangle,
   IndianRupee,
 } from "lucide-react";
 import { CareerApplication } from "@/app/api/careers/route";
 import { CareerStatus, STATUS_OPTIONS } from "@/app/types/career";
-import toast from "react-hot-toast";
 
 export default function CareersPage() {
   const [applications, setApplications] = useState<CareerApplication[]>([]);
@@ -119,10 +120,10 @@ export default function CareersPage() {
       window.URL.revokeObjectURL(url);
 
       // Show success notification
-      toast.success("Resume downloaded successfully");
+      showNotification("Resume downloaded successfully", "success");
     } catch (err) {
       console.error("Error downloading resume:", err);
-      toast.error("Failed to download resume. Please try again.");
+      showNotification("Failed to download resume. Please try again.", "error");
     }
   };
 
@@ -136,6 +137,50 @@ export default function CareersPage() {
       "text/plain": ".txt",
     };
     return extensions[mimeType] || ".file";
+  };
+
+  // Notification function
+  const showNotification = (
+    message: string,
+    type: "success" | "error" = "error"
+  ) => {
+    const notificationContainer = document.createElement("div");
+    notificationContainer.className = `
+      fixed top-4 right-4 z-50 
+      ${
+        type === "error"
+          ? "bg-red-100 border-red-400 text-red-700"
+          : "bg-green-100 border-green-400 text-green-700"
+      }
+      border px-4 py-3 rounded 
+      shadow-lg transition-all duration-300 ease-in-out
+      flex items-center
+    `;
+
+    notificationContainer.innerHTML = `
+      <div class="flex items-center">
+        ${
+          type === "error"
+            ? `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+             </svg>`
+            : `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+             </svg>`
+        }
+        <span>${message}</span>
+      </div>
+    `;
+
+    document.body.appendChild(notificationContainer);
+
+    // Remove the notification after 5 seconds
+    setTimeout(() => {
+      notificationContainer.classList.add("opacity-0", "translate-x-full");
+      setTimeout(() => {
+        document.body.removeChild(notificationContainer);
+      }, 300);
+    }, 5000);
   };
 
   // Pagination Handlers
@@ -190,10 +235,10 @@ export default function CareersPage() {
       }
 
       // Show success notification
-      toast.success(`Application status updated to ${newStatus}`);
+      showNotification(`Application status updated to ${newStatus}`, "success");
     } catch (err) {
       console.error("Error updating application status:", err);
-      toast.error("Failed to update application status");
+      showNotification("Failed to update application status", "error");
     }
   };
 
@@ -277,19 +322,7 @@ export default function CareersPage() {
                 <option value="New">New</option>
                 <option value="In Review">In Review</option>
                 <option value="Shortlisted">Shortlisted</option>
-                <option value="Scheduled">Scheduled</option>
-                <option value="Interviewed">Interviewed</option>
-                <option value="Technical Round">Technical Round</option>
-                <option value="HR Round">HR Round</option>
-                <option value="Background Check">Background Check</option>
-                <option value="Offer Sent">Offer Sent</option>
-                <option value="Negotiation">Negotiation</option>
-                <option value="Offer Accepted">Offer Accepted</option>
-                <option value="Hired">Hired</option>
                 <option value="Rejected">Rejected</option>
-                <option value="Placed">Placed</option>
-                <option value="On Hold">On Hold</option>
-                <option value="Withdrawn">Withdrawn</option>
               </select>
             </div>
 

@@ -50,14 +50,14 @@ export default function Header({ user, onMenuToggle }: HeaderProps) {
 
       {/* Right side - user section */}
       <div className="flex items-center space-x-4">
-        <button className="p-1.5 rounded-full hover:bg-gray-100">
+        <button className="p-1.5 rounded-full hover:bg-gray-100 cursor-pointer">
           <Bell className="w-5 h-5 text-gray-500" />
         </button>
 
         <div className="relative">
           <button
             onClick={toggleUserMenu}
-            className="flex items-center space-x-2 p-1.5 rounded-full hover:bg-gray-100"
+            className="flex items-center space-x-2 p-1.5 rounded-full hover:bg-gray-100 cursor-pointer"
           >
             <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white font-medium">
               {user?.name ? user.name.charAt(0).toUpperCase() : "U"}
@@ -91,7 +91,7 @@ export default function Header({ user, onMenuToggle }: HeaderProps) {
               </a>
 
               <a
-                href="#"
+                href="/dashboard/settings"
                 className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
               >
                 <Settings className="w-4 h-4 mr-2" />
@@ -99,7 +99,7 @@ export default function Header({ user, onMenuToggle }: HeaderProps) {
               </a>
               <button
                 onClick={() => signOut({ callbackUrl: "/login" })}
-                className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-gray-100 cursor-pointer"
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Sign out

@@ -4,21 +4,14 @@ import { useEffect, useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import {
   Calendar,
-  Clock,
-  IndianRupee,
   FileInput,
   User,
   Briefcase,
-  Download,
   File,
   FileSpreadsheet,
-  Settings,
-  AlertTriangle,
   Info,
   Users,
   FilePlus,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -1516,20 +1509,22 @@ export default function Home() {
 
       <main className="container mx-auto p-4">
         {/* File upload section */}
-        <div className="mb-8 bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800 flex items-center mb-2">
+            <Briefcase className="mr-3 text-purple-600" />
+            Automated Salary Calculator
+          </h1>
+          <p className="text-gray-600">
+            Calculate precise salaries instantly with smart, data-driven
+            estimates
+          </p>
+        </div>
+        <div className="mb-8 bg-white p-6 rounded-lg shadow-md border border-gray-200 mt-6">
           <div className="flex w-full justify-between">
             <h2 className="text-xl font-semibold mb-4 flex items-center">
               <FileInput className="mr-2 text-purple-600" />
               Import Attendance Data
             </h2>
-            <a
-              href="/sample/salary.xlsx"
-              download
-              className="flex items-center px-4 py-2 bg-purple-600 h-10 text-white rounded-lg hover:bg-purple-700 shadow-sm transition-all"
-            >
-              <Download className="mr-2 w-4 h-4" />
-              Sample File
-            </a>
           </div>
 
           <div className="flex items-center flex-wrap gap-4">
