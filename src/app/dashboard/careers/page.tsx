@@ -100,7 +100,11 @@ export default function CareersPage() {
   // Download resume with improved error handling
   const downloadResume = async (resumeUrl: string) => {
     try {
-      const response = await fetch(resumeUrl);
+      // Encode the URL to handle special characters properly
+      const encodedResumeUrl = encodeURIComponent(resumeUrl);
+
+      // Use our proxy endpoint instead of direct S3 access
+      const response = await fetch(`/api/resume/${encodedResumeUrl}`);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -125,7 +129,6 @@ export default function CareersPage() {
       toast.error("Failed to download resume. Please try again.");
     }
   };
-
   // Helper function to get file extension
   const getFileExtension = (mimeType: string) => {
     const extensions: { [key: string]: string } = {
@@ -597,14 +600,14 @@ export default function CareersPage() {
                     <h5 className="text-sm font-medium text-gray-700">
                       Documents
                     </h5>
-                    <div className="mt-2 space-y-2">
+                    <div className="mt-2 space-y-2 ">
                       <div className="flex items-center">
                         <Download className="h-4 w-4 text-gray-400 mr-2" />
                         <button
                           onClick={() =>
                             downloadResume(selectedApplication.resume)
                           }
-                          className="text-purple-600 hover:underline"
+                          className="text-purple-600 hover:underline cursor-pointer"
                         >
                           Download Resume
                         </button>
