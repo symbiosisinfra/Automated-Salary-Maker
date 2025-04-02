@@ -686,7 +686,7 @@ export default function SettingsPage() {
 
               {/* Departments Pagination */}
               {filteredDepartments.length > 0 && (
-                <div className="flex justify-between items-center bg-white rounded-lg shadow-md p-4">
+                <div className="flex justify-between items-center bg-white rounded-lg shadow-md p-4 border">
                   <div className="text-sm text-gray-700">
                     Showing{" "}
                     <span className="font-medium">
@@ -883,7 +883,7 @@ export default function SettingsPage() {
 
               {/* Designations Pagination */}
               {filteredDesignations.length > 0 && (
-                <div className="flex justify-between items-center bg-white rounded-lg shadow-md p-4">
+                <div className="flex justify-between items-center bg-white rounded-lg shadow-md p-4 border">
                   <div className="text-sm text-gray-700">
                     Showing{" "}
                     <span className="font-medium">

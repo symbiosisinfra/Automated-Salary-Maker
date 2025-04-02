@@ -360,18 +360,45 @@ export default function Home() {
             ) {
               let outTimeValue = outRow[day];
 
-              // Special handling for Day 8 out time if needed
-              if (day === 8) {
-                try {
-                  const formattedTime = formatTimeLogically(outTimeValue, true);
-                  if (formattedTime.includes("NaN")) {
-                    outTimeValue = "06:38"; // Will be formatted to 18:38
+              // Dynamic handling for any problematic out time
+              try {
+                const formattedTime = formatTimeLogically(outTimeValue, true);
+                // Check if the formatted time contains NaN or is invalid
+                if (formattedTime.includes("NaN") || !formattedTime) {
+                  // If this is a present day (not a Week Off or WFH or other status)
+                  const currentStatus =
+                    currentEmployee.attendance[dayKey].status;
+                  if (currentStatus === "Present") {
+                    // Use office end time as default value
+                    // Format as HH:MM using the office end constants
+                    const endHour = OFFICE_END_HOUR.toString().padStart(2, "0");
+                    const endMinute = OFFICE_END_MINUTE.toString().padStart(
+                      2,
+                      "0"
+                    );
+                    outTimeValue = `${endHour}:${endMinute}`;
                   }
-                } catch {
-                  outTimeValue = "06:38"; // Will be formatted to 18:38
+                }
+              } catch (error) {
+                // In case of error, use office end time as fallback
+                // Only apply this to present days
+                if (currentEmployee.attendance[dayKey].status === "Present") {
+                  const endHour = OFFICE_END_HOUR.toString().padStart(2, "0");
+                  const endMinute = OFFICE_END_MINUTE.toString().padStart(
+                    2,
+                    "0"
+                  );
+                  outTimeValue = `${endHour}:${endMinute}`;
+
+                  // Log the error for debugging
+                  console.warn(
+                    `Invalid out time fixed for employee ${currentEmployee.name} on day ${day}`,
+                    error
+                  );
                 }
               }
 
+              // Apply the formatted time
               currentEmployee.attendance[dayKey].outTime = formatTimeLogically(
                 outTimeValue,
                 true
@@ -382,7 +409,6 @@ export default function Home() {
           // Skip the out-time row in the next iteration
           i++;
         }
-
         // Calculate deficits for each day
         if (currentEmployee.attendance) {
           Object.keys(currentEmployee.attendance).forEach((day) => {
