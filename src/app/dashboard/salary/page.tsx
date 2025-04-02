@@ -32,6 +32,10 @@ interface DayAttendance {
   outTime: string | null;
   status: "Present" | "Absent" | "WFH" | "Week Off" | "CL";
   deficitMinutes: number;
+  isLate?: boolean;
+  lateBy?: number;
+  isEarly?: boolean;
+  earlyBy?: number;
 }
 
 interface SalaryCalculation {
@@ -79,6 +83,9 @@ export default function Home() {
   const [month, setMonth] = useState<string>("");
   const [year, setYear] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [manualBufferDays, setManualBufferDays] = useState<
+    Record<number, string[]>
+  >({});
   const tableRef = useRef<HTMLDivElement>(null);
 
   // Process file upload
@@ -126,6 +133,23 @@ export default function Home() {
       const extractedEmployees = processEmployeeData(jsonData, daysInMonth);
       setEmployees(extractedEmployees);
 
+      // Initialize manual buffer days for new employees
+      const initialManualBufferDays: Record<number, string[]> = {};
+      extractedEmployees.forEach((employee) => {
+        // If we don't have selections for this employee yet, initialize with empty array
+        if (!manualBufferDays[employee.id]) {
+          initialManualBufferDays[employee.id] = [];
+        }
+      });
+
+      // Only set if we have new employees
+      if (Object.keys(initialManualBufferDays).length > 0) {
+        setManualBufferDays((prev) => ({
+          ...prev,
+          ...initialManualBufferDays,
+        }));
+      }
+
       // Select the first employee by default if available
       if (extractedEmployees.length > 0) {
         setSelectedEmployee(extractedEmployees[0]);
@@ -137,6 +161,53 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  // Helper functions for manual buffer selection
+  const getSelectedBufferDaysCount = (employeeId: number) => {
+    return manualBufferDays[employeeId]?.length || 0;
+  };
+
+  const toggleBufferDay = (employeeId: number, day: string) => {
+    const currentBufferDays = manualBufferDays[employeeId] || [];
+
+    // If already selected, remove it
+    if (currentBufferDays.includes(day)) {
+      setManualBufferDays({
+        ...manualBufferDays,
+        [employeeId]: currentBufferDays.filter((d) => d !== day),
+      });
+    }
+    // Otherwise add it if we haven't reached the maximum
+    else if (currentBufferDays.length < MAX_BUFFER_DAYS) {
+      setManualBufferDays({
+        ...manualBufferDays,
+        [employeeId]: [...currentBufferDays, day],
+      });
+    }
+  };
+
+  // Update employee calculations when buffer selections change
+  useEffect(() => {
+    if (employees.length > 0) {
+      // Recalculate salaries with manually selected buffer days
+      const updatedEmployees = employees.map((employee) => {
+        const calculation = calculateSalary(employee);
+        return { ...employee, calculation };
+      });
+
+      setEmployees(updatedEmployees);
+
+      // Update selected employee if needed
+      if (selectedEmployee) {
+        const updatedSelectedEmployee = updatedEmployees.find(
+          (emp) => emp.id === selectedEmployee.id
+        );
+        if (updatedSelectedEmployee) {
+          setSelectedEmployee(updatedSelectedEmployee);
+        }
+      }
+    }
+  }, [manualBufferDays]);
 
   // Detect days in month dynamically based on column headers
   const detectDaysInMonth = (data: any[]): number => {
@@ -409,7 +480,7 @@ export default function Home() {
           // Skip the out-time row in the next iteration
           i++;
         }
-        // Calculate deficits for each day
+        // Calculate deficits for each day and add metadata for late/early
         if (currentEmployee.attendance) {
           Object.keys(currentEmployee.attendance).forEach((day) => {
             const attendance = currentEmployee.attendance![day];
@@ -422,10 +493,18 @@ export default function Home() {
             ) {
               // No deficit for week off, WFH, or CL (paid leave)
               attendance.deficitMinutes = 0;
+              attendance.isLate = false;
+              attendance.lateBy = 0;
+              attendance.isEarly = false;
+              attendance.earlyBy = 0;
             } else if (!attendance.inTime || !attendance.outTime) {
               // Missing in or out time = absent (full day deficit)
               attendance.status = "Absent";
               attendance.deficitMinutes = EXPECTED_WORK_MINUTES;
+              attendance.isLate = false;
+              attendance.lateBy = 0;
+              attendance.isEarly = false;
+              attendance.earlyBy = 0;
             } else {
               // Calculate work time with robust time parsing
               try {
@@ -442,6 +521,10 @@ export default function Home() {
                   // If time parsing fails, mark as absent
                   attendance.status = "Absent";
                   attendance.deficitMinutes = EXPECTED_WORK_MINUTES;
+                  attendance.isLate = false;
+                  attendance.lateBy = 0;
+                  attendance.isEarly = false;
+                  attendance.earlyBy = 0;
                   return;
                 }
 
@@ -453,24 +536,30 @@ export default function Home() {
                 const expectedOutMinutes =
                   OFFICE_END_HOUR * 60 + OFFICE_END_MINUTE; // 18:30 PM
 
+                // Check if late or early
+                const isLate = inMinutes > expectedInMinutes;
+                const lateBy = isLate ? inMinutes - expectedInMinutes : 0;
+
+                const isEarly = outMinutes < expectedOutMinutes;
+                const earlyBy = isEarly ? expectedOutMinutes - outMinutes : 0;
+
                 // Calculate deficit
-                let deficitMinutes = 0;
+                let deficitMinutes = lateBy + earlyBy;
 
-                // Late arrival
-                if (inMinutes > expectedInMinutes) {
-                  deficitMinutes += inMinutes - expectedInMinutes;
-                }
-
-                // Early departure
-                if (outMinutes < expectedOutMinutes) {
-                  deficitMinutes += expectedOutMinutes - outMinutes;
-                }
-
+                // Set attendance properties
                 attendance.deficitMinutes = deficitMinutes;
+                attendance.isLate = isLate;
+                attendance.lateBy = lateBy;
+                attendance.isEarly = isEarly;
+                attendance.earlyBy = earlyBy;
               } catch (error) {
                 // If any calculation error occurs, default to absent
                 attendance.status = "Absent";
                 attendance.deficitMinutes = EXPECTED_WORK_MINUTES;
+                attendance.isLate = false;
+                attendance.lateBy = 0;
+                attendance.isEarly = false;
+                attendance.earlyBy = 0;
               }
             }
           });
@@ -492,7 +581,7 @@ export default function Home() {
     return employees;
   };
 
-  // Complete fixed calculateSalary function with all improvements
+  // Complete fixed calculateSalary function with manual buffer selection
   const calculateSalary = (employee: Employee): SalaryCalculation => {
     // Count different day types
     const presentDays = Object.values(employee.attendance).filter(
@@ -524,68 +613,21 @@ export default function Home() {
       0
     );
 
-    // BUFFER APPLICATION LOGIC
+    // MANUAL BUFFER APPLICATION LOGIC
+    const bufferDaysForEmployee = manualBufferDays[employee.id] || [];
     let bufferApplied = 0;
-    const daysWithBuffer: string[] = [];
 
-    // First, analyze each day to identify late arrivals AND early departures
-    const daysWithAnalysis = Object.entries(employee.attendance).map(
-      ([day, att]) => {
-        // Skip non-Present days
-        if (att.status !== "Present" || !att.inTime || !att.outTime) {
-          return [
-            day,
-            { ...att, isLate: false, lateBy: 0, isEarly: false, earlyBy: 0 },
-          ];
+    // Calculate buffer from the manually selected days
+    bufferDaysForEmployee.forEach((day) => {
+      if (employee.attendance[day]) {
+        const att = employee.attendance[day];
+        // Apply buffer to any day with deficit minutes (both late arrivals and early departures)
+        if (att.status === "Present" && att.deficitMinutes > 0) {
+          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
+          bufferApplied += Math.min(att.deficitMinutes, BUFFER_MINUTES);
         }
-
-        // Parse in time and out time
-        const inTimeParts = att.inTime.split(":").map(Number);
-        const inMinutes = inTimeParts[0] * 60 + inTimeParts[1];
-
-        const outTimeParts = att.outTime.split(":").map(Number);
-        const outMinutes = outTimeParts[0] * 60 + outTimeParts[1];
-
-        // Expected times
-        const expectedInMinutes = OFFICE_START_HOUR * 60; // 10:00 AM
-        const expectedOutMinutes = OFFICE_END_HOUR * 60 + OFFICE_END_MINUTE; // 18:30 PM
-
-        // Calculate deficits
-        const lateBy =
-          inMinutes > expectedInMinutes ? inMinutes - expectedInMinutes : 0;
-        const earlyBy =
-          outMinutes < expectedOutMinutes ? expectedOutMinutes - outMinutes : 0;
-
-        const isLate = lateBy > 0;
-        const isEarly = earlyBy > 0;
-
-        return [day, { ...att, isLate, lateBy, isEarly, earlyBy }];
       }
-    );
-
-    // Filter eligible days for buffer:
-    // 1. Only Present days
-    // 2. Employee must be late (but by ≤ BUFFER_MINUTES)
-    // 3. Employee must NOT leave early (no early departure)
-    const eligibleDaysForBuffer = daysWithAnalysis
-      .filter(
-        ([_, att]) => att.isLate && att.lateBy <= BUFFER_MINUTES && !att.isEarly
-      )
-      .sort(([a], [b]) => parseInt(a) - parseInt(b)); // Sort by day chronologically
-
-    // Apply buffer to the first MAX_BUFFER_DAYS eligible days
-    for (
-      let i = 0;
-      i < eligibleDaysForBuffer.length &&
-      daysWithBuffer.length < MAX_BUFFER_DAYS;
-      i++
-    ) {
-      const [day, att] = eligibleDaysForBuffer[i];
-
-      // Apply buffer to eliminate the late deficit
-      bufferApplied += att.lateBy;
-      daysWithBuffer.push(day);
-    }
+    });
 
     // Calculate final deficit after buffer
     const finalDeficit = Math.max(0, totalDeficitMinutes - bufferApplied);
@@ -613,7 +655,7 @@ export default function Home() {
       clDays,
       totalDeficitMinutes,
       bufferApplied,
-      daysWithBuffer,
+      daysWithBuffer: bufferDaysForEmployee,
       finalDeficit,
       deduction,
       finalSalary,
@@ -1628,11 +1670,12 @@ export default function Home() {
                 The tool will automatically detect working days in the month
               </li>
               <li>
-                WFH (Work From Home) and CL (Casual Leave) days are fully paid
-                with no deductions
+                Manually select which late days to apply buffer to (max 3 per
+                employee)
               </li>
               <li>
-                Buffer of 15 minutes is applied for up to 3 days per month
+                WFH (Work From Home) and CL (Casual Leave) days are fully paid
+                with no deductions
               </li>
               <li>Export calculated salary details as Excel or PDF</li>
               <li>Batch export all employees' data with a single click</li>
@@ -1649,8 +1692,8 @@ export default function Home() {
                 <User className="mr-2 text-purple-600" />
                 Employees
               </h2>
-              {employees.map((employee) => (
-                <div className="max-h-96 overflow-y-auto">
+              <div className="max-h-96 overflow-y-auto">
+                {employees.map((employee) => (
                   <div
                     key={employee.id}
                     className={`p-3 mb-2 rounded-md cursor-pointer transition-all ${
@@ -1668,8 +1711,8 @@ export default function Home() {
                       {employee.department.toLowerCase()}
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 
@@ -1828,12 +1871,21 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Attendance Details */}
+              {/* Attendance Details with manual buffer selection */}
               <div ref={tableRef}>
                 <h3 className="text-lg font-semibold mb-3 flex items-center">
                   <Calendar className="mr-2 text-purple-600 w-5 h-5" />
                   Attendance Details
                 </h3>
+
+                <div className="bg-yellow-50 p-3 mb-4 rounded-lg border border-yellow-200">
+                  <p className="text-sm text-yellow-800">
+                    <strong>Buffer Selection:</strong> Check the boxes below to
+                    apply buffer for any day with deficit minutes (up to{" "}
+                    {MAX_BUFFER_DAYS} days). You can apply buffer to days with
+                    late arrivals, early departures, or both.
+                  </p>
+                </div>
 
                 <div className="overflow-x-auto">
                   <table className="min-w-full bg-white">
@@ -1855,7 +1907,7 @@ export default function Home() {
                           Deficit
                         </th>
                         <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
-                          Buffer
+                          Apply Buffer
                         </th>
                       </tr>
                     </thead>
@@ -1867,6 +1919,10 @@ export default function Home() {
                             selectedEmployee.calculation.daysWithBuffer.includes(
                               day
                             );
+
+                          // Get the count of currently selected buffer days
+                          const selectedBufferCount =
+                            getSelectedBufferDaysCount(selectedEmployee.id);
 
                           return (
                             <tr
@@ -1905,9 +1961,19 @@ export default function Home() {
                               </td>
                               <td className="py-2 px-3 text-sm text-gray-900">
                                 {att.inTime || "-"}
+                                {att.isLate && att.lateBy && (
+                                  <span className="ml-2 text-xs text-red-600">
+                                    (+{att.lateBy} min late)
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2 px-3 text-sm text-gray-900">
                                 {att.outTime || "-"}
+                                {att.isEarly && att.earlyBy && (
+                                  <span className="ml-2 text-xs text-red-600">
+                                    (-{att.earlyBy} min early)
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2 px-3 text-sm text-gray-900">
                                 {att.deficitMinutes > 0
@@ -1915,14 +1981,38 @@ export default function Home() {
                                   : "-"}
                               </td>
                               <td className="py-2 px-3 text-sm">
-                                {isBufferApplied ? (
-                                  <span className="text-yellow-700 font-medium">
-                                    Applied
-                                  </span>
-                                ) : att.deficitMinutes > 0 ? (
-                                  <span className="text-red-700">-</span>
+                                {att.status === "Present" &&
+                                att.deficitMinutes > 0 ? (
+                                  <div className="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isBufferApplied}
+                                      disabled={
+                                        !isBufferApplied &&
+                                        selectedBufferCount >= MAX_BUFFER_DAYS
+                                      }
+                                      onChange={() =>
+                                        toggleBufferDay(
+                                          selectedEmployee.id,
+                                          day
+                                        )
+                                      }
+                                      className="h-4 w-4 text-purple-600 focus:ring-purple-500 rounded"
+                                    />
+                                    <span className="ml-2 text-xs text-green-600">
+                                      {isBufferApplied
+                                        ? `Applied (${Math.min(
+                                            att.deficitMinutes,
+                                            BUFFER_MINUTES
+                                          )} mins)`
+                                        : selectedBufferCount >=
+                                            MAX_BUFFER_DAYS && !isBufferApplied
+                                        ? "Limit reached"
+                                        : "Eligible"}
+                                    </span>
+                                  </div>
                                 ) : (
-                                  "-"
+                                  <span className="text-gray-400">-</span>
                                 )}
                               </td>
                             </tr>
