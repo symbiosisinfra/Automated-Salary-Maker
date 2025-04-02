@@ -82,6 +82,7 @@ export default function Home() {
   const [exportLoading, setExportLoading] = useState(false);
   const [month, setMonth] = useState<string>("");
   const [year, setYear] = useState<string>("");
+  const [employeeFilter, setEmployeeFilter] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
   const [manualBufferDays, setManualBufferDays] = useState<
     Record<number, string[]>
@@ -1688,30 +1689,54 @@ export default function Home() {
 
           {employees.length > 0 && (
             <div className="md:w-1/3 lg:w-1/4 bg-white rounded-lg shadow-md p-4 h-fit">
-              <h2 className="text-lg font-semibold mb-4 flex items-center text-gray-900">
+              <h2 className="text-lg font-semibold mb-2 flex items-center text-gray-900">
                 <User className="mr-2 text-purple-600" />
                 Employees
               </h2>
+
+              {/* Employee filter */}
+              <div className="mb-3">
+                <input
+                  type="text"
+                  placeholder="Filter employees..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={employeeFilter}
+                  onChange={(e) => setEmployeeFilter(e.target.value)}
+                />
+              </div>
+
               <div className="max-h-96 overflow-y-auto">
-                {employees.map((employee) => (
-                  <div
-                    key={employee.id}
-                    className={`p-3 mb-2 rounded-md cursor-pointer transition-all ${
-                      selectedEmployee?.id === employee.id
-                        ? "bg-purple-100 border-l-4 border-purple-500 text-gray-900"
-                        : "hover:bg-gray-100 text-gray-900"
-                    }`}
-                    onClick={() => setSelectedEmployee(employee)}
-                  >
-                    <div className="font-medium text-gray-900 capitalize">
-                      {employee.name.toLowerCase()}
+                {employees
+                  .filter(
+                    (employee) =>
+                      employee.name
+                        .toLowerCase()
+                        .includes(employeeFilter.toLowerCase()) ||
+                      employee.department
+                        .toLowerCase()
+                        .includes(employeeFilter.toLowerCase())
+                  )
+                  .map((employee) => (
+                    <div
+                      key={employee.id}
+                      className={`employee-item p-3 mb-2 rounded-md cursor-pointer transition-all ${
+                        selectedEmployee?.id === employee.id
+                          ? "bg-purple-100 border-l-4 border-purple-500 text-gray-900"
+                          : "hover:bg-gray-100 text-gray-900"
+                      }`}
+                      data-name={employee.name.toLowerCase()}
+                      data-dept={employee.department.toLowerCase()}
+                      onClick={() => setSelectedEmployee(employee)}
+                    >
+                      <div className="font-medium text-gray-900 capitalize">
+                        {employee.name.toLowerCase()}
+                      </div>
+                      <div className="text-sm text-gray-700 flex items-center capitalize">
+                        <Briefcase className="w-4 h-4 mr-1" />
+                        {employee.department.toLowerCase()}
+                      </div>
                     </div>
-                    <div className="text-sm text-gray-700 flex items-center capitalize">
-                      <Briefcase className="w-4 h-4 mr-1" />
-                      {employee.department.toLowerCase()}
-                    </div>
-                  </div>
-                ))}
+                  ))}
               </div>
             </div>
           )}
