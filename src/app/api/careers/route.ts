@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../lib/auth";
 import { connectToDatabase } from "../../../lib/mongodb";
+import { handleApiError } from "@/lib/utils";
 
 // Career application status types
 export type CareerStatus =
@@ -41,7 +42,6 @@ export interface CareerApplication {
   __v: number;
 }
 
-// Get all career applications
 export async function GET(request: Request) {
   try {
     // Authenticate request
@@ -53,20 +53,19 @@ export async function GET(request: Request) {
     // Connect to the database
     const { db } = await connectToDatabase();
 
-    // Get all career applications
-    const careers = await db
-      .collection("careers")
-      .find({})
-      .sort({ createdAt: -1 })
-      .toArray();
+    // Get all career applications with timeout protection
+    const careers = await Promise.race([
+      db.collection("careers").find({}).sort({ createdAt: -1 }).toArray(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Database query timeout")), 10000)
+      ),
+    ]);
 
     return NextResponse.json(careers, { status: 200 });
   } catch (error) {
-    console.error("Error fetching career applications:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return handleApiError(error, "Error fetching career applications");
   }
 }
-
 // Update career application status
 export async function PATCH(request: Request) {
   try {

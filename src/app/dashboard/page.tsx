@@ -29,9 +29,38 @@ import Link from "next/link";
 import { CareerApplication } from "@/app/api/careers/route";
 import { Department, Designation, Employee } from "@/app/types/models";
 
+// Define the metrics interface
+interface DashboardMetrics {
+  // Employee stats
+  activeEmployees: number;
+  totalEmployees: number;
+
+  // Department stats
+  activeDepartments: number;
+  totalDepartments: number;
+
+  // Designation stats
+  activeDesignations: number;
+  totalDesignations: number;
+
+  // Application stats
+  newApplications: number;
+  hiredApplications: number;
+  shortlistedApplications: number;
+  totalApplications: number;
+
+  // Salary metrics
+  totalSalary: number;
+  avgSalary: number;
+
+  // Department distribution
+  departmentDistribution: Record<string, number>;
+}
+
 export default function Dashboard() {
   const { data: session } = useSession();
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Data states
   const [careerApplications, setCareerApplications] = useState<
@@ -47,60 +76,146 @@ export default function Dashboard() {
   const [showAllActivities, setShowAllActivities] = useState(false);
   const [showAllApplications, setShowAllApplications] = useState(false);
 
-  // Fetch dashboard data from real APIs
-  useEffect(() => {
-    const fetchDashboardData = async () => {
+  // Initialize metrics with default values
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    // Employee stats
+    activeEmployees: 0,
+    totalEmployees: 0,
+
+    // Department stats
+    activeDepartments: 0,
+    totalDepartments: 0,
+
+    // Designation stats
+    activeDesignations: 0,
+    totalDesignations: 0,
+
+    // Application stats
+    newApplications: 0,
+    hiredApplications: 0,
+    shortlistedApplications: 0,
+    totalApplications: 0,
+
+    // Salary metrics
+    totalSalary: 0,
+    avgSalary: 0,
+
+    // Department distribution (empty object initially)
+    departmentDistribution: {},
+  });
+
+  // Fetch dashboard data with retry logic
+  const fetchDashboardData = async (showRefreshIndicator = true) => {
+    if (showRefreshIndicator) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      setError(null);
+    }
+    setError(null);
 
-      try {
-        // Fetch all required data in parallel
-        const [careerResp, employeeResp, departmentResp, designationResp] =
-          await Promise.all([
-            fetch("/api/careers"),
-            fetch("/api/employees"),
-            fetch("/api/departments"),
-            fetch("/api/designations"),
-          ]);
+    try {
+      // Implement retry logic for critical API calls
+      const fetchWithRetry = async (
+        url: string,
+        retries = 3,
+        timeout = 10000
+      ) => {
+        for (let i = 0; i < retries; i++) {
+          try {
+            // Create an abort controller for timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-        // Check for any failed requests
-        if (!careerResp.ok)
-          throw new Error("Failed to fetch career applications");
-        if (!employeeResp.ok) throw new Error("Failed to fetch employees data");
-        if (!departmentResp.ok)
-          throw new Error("Failed to fetch departments data");
-        if (!designationResp.ok)
-          throw new Error("Failed to fetch designations data");
+            const response = await fetch(url, {
+              signal: controller.signal,
+              headers: {
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                Pragma: "no-cache",
+                Expires: "0",
+              },
+            });
 
-        // Parse all responses
-        const careerData = await careerResp.json();
-        const employeeData = await employeeResp.json();
-        const departmentData = await departmentResp.json();
-        const designationData = await designationResp.json();
+            // Clear the timeout
+            clearTimeout(timeoutId);
 
-        // Update state with fetched data
-        setCareerApplications(careerData);
-        setEmployees(employeeData);
-        setDepartments(departmentData);
-        setDesignations(designationData);
-        setLastUpdated(new Date());
-      } catch (error) {
-        console.error("Error fetching dashboard data:", error);
-        setError(
-          error instanceof Error
-            ? error.message
-            : "Failed to load dashboard data"
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    };
+            if (!response.ok) {
+              throw new Error(`Failed to fetch: ${url} (${response.status})`);
+            }
 
-    fetchDashboardData();
+            return await response.json();
+          } catch (err) {
+            console.warn(`Fetch attempt ${i + 1} failed for ${url}:`, err);
+
+            if (err instanceof DOMException && err.name === "AbortError") {
+              console.warn(`Request timed out after ${timeout}ms`);
+            }
+
+            if (i === retries - 1) throw err;
+
+            // Wait before retrying (exponential backoff)
+            const delay = 1000 * Math.pow(2, i);
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise((r) => setTimeout(r, delay));
+          }
+        }
+        return []; // Fallback empty array if all attempts fail but don't throw
+      };
+
+      // Fetch all required data with retry
+      const [careerData, employeeData, departmentData, designationData] =
+        await Promise.all([
+          fetchWithRetry("/api/careers"),
+          fetchWithRetry("/api/employees"),
+          fetchWithRetry("/api/departments"),
+          fetchWithRetry("/api/designations"),
+        ]);
+
+      // Update state with fetched data
+      setCareerApplications(careerData || []);
+      setEmployees(employeeData || []);
+      setDepartments(departmentData || []);
+      setDesignations(designationData || []);
+      setLastUpdated(new Date());
+
+      // Calculate metrics directly
+      calculateMetrics(
+        employeeData,
+        departmentData,
+        designationData,
+        careerData
+      );
+    } catch (error) {
+      console.error("Error fetching dashboard data:", error);
+      setError(
+        error instanceof Error ? error.message : "Failed to load dashboard data"
+      );
+      // Don't reset the existing data on error
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // Initial fetch on component mount
+  useEffect(() => {
+    fetchDashboardData(false);
+
+    // Set up periodic refresh
+    const refreshInterval = setInterval(() => {
+      fetchDashboardData(true);
+    }, 300000); // Refresh every 5 minutes
+
+    // Clean up interval on unmount
+    return () => clearInterval(refreshInterval);
   }, []);
 
-  // Derived metrics
-  const metrics = useMemo(() => {
+  // Function to calculate metrics from data
+  const calculateMetrics = (
+    employees: Employee[],
+    departments: Department[],
+    designations: Designation[],
+    careerApplications: CareerApplication[]
+  ) => {
     // Employee stats
     const activeEmployees = employees.filter(
       (emp) => emp.status === "Active"
@@ -140,7 +255,8 @@ export default function Dashboard() {
       return acc;
     }, {} as Record<string, number>);
 
-    return {
+    // Update metrics state
+    setMetrics({
       activeEmployees,
       totalEmployees: employees.length,
       activeDepartments,
@@ -154,8 +270,8 @@ export default function Dashboard() {
       totalSalary,
       avgSalary,
       departmentDistribution,
-    };
-  }, [employees, departments, designations, careerApplications]);
+    });
+  };
 
   // Recent activities (combine all events)
   const recentActivities = useMemo(() => {
@@ -193,6 +309,11 @@ export default function Dashboard() {
     }).format(amount);
   };
 
+  // Handle manual refresh
+  const handleManualRefresh = () => {
+    fetchDashboardData(true);
+  };
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center p-6">
@@ -211,6 +332,13 @@ export default function Dashboard() {
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center mb-4">
           <AlertCircle className="w-5 h-5 mr-3 text-red-600" />
           <span>{error}</span>
+          <button
+            onClick={handleManualRefresh}
+            className="ml-auto bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1 rounded text-sm flex items-center"
+          >
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Retry
+          </button>
         </div>
       )}
 
@@ -222,13 +350,24 @@ export default function Dashboard() {
             Dashboard
           </h1>
           <p className="text-gray-600">
-            Welcome back, {session?.user?.name}! Here's your overview of
-            Symbiosis Infra Private Limited.
+            Welcome back, {session?.user?.name || "User"}! Here's your overview
+            of Symbiosis Infra Private Limited.
           </p>
         </div>
-        <div className="mt-2 md:mt-0 text-xs text-gray-500 flex items-center">
-          <RefreshCw className="w-3 h-3 mr-1" />
-          Last updated: {formatTimeAgo(lastUpdated)}
+        <div className="mt-2 md:mt-0 flex items-center">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="text-gray-500 hover:text-purple-600 mr-3 p-1 rounded-full hover:bg-purple-50 transition-colors disabled:opacity-50"
+            title="Refresh dashboard"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+          <div className="text-xs text-gray-500 flex items-center">
+            Last updated: {formatTimeAgo(lastUpdated)}
+          </div>
         </div>
       </div>
 
@@ -241,8 +380,7 @@ export default function Dashboard() {
           icon={<Users className="w-7 h-7 text-purple-600" />}
           linkTo="/dashboard/employees"
           color="purple"
-          className="h-full" // Added h-full to make card fill available height
-          label={undefined}
+          className="h-full"
         />
         <StatCard
           title="Active Departments"
@@ -251,8 +389,7 @@ export default function Dashboard() {
           icon={<Building className="w-7 h-7 text-blue-600" />}
           linkTo="/dashboard/settings"
           color="blue"
-          className="h-full" // Added h-full to make card fill available height
-          label={undefined}
+          className="h-full"
         />
         <StatCard
           title="Job Applications"
@@ -262,17 +399,15 @@ export default function Dashboard() {
           icon={<Briefcase className="w-7 h-7 text-amber-600" />}
           linkTo="/dashboard/careers"
           color="amber"
-          className="h-full" // Added h-full to make card fill available height
+          className="h-full"
         />
         <StatCard
           title="Average Salary"
           value={formatCurrency(metrics.avgSalary)}
           icon={<IndianRupee className="w-7 h-7 text-green-600" />}
-          linkTo="/dashboard/salary"
+          linkTo="/dashboard/employees"
           color="green"
-          className="h-full" // Added h-full to make card fill available height
-          total={undefined}
-          label={undefined}
+          className="h-full"
         />
       </section>
 
@@ -295,28 +430,36 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-3">
-            {Object.entries(metrics.departmentDistribution)
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5)
-              .map(([department, count]) => (
-                <div
-                  key={department}
-                  className="flex items-center justify-between"
-                >
-                  <div className="flex items-center">
-                    <div className="w-2 h-2 rounded-full bg-blue-600 mr-2"></div>
-                    <span className="text-sm text-gray-700">{department}</span>
+            {Object.entries(metrics.departmentDistribution).length > 0 ? (
+              Object.entries(metrics.departmentDistribution)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([department, count]) => (
+                  <div
+                    key={department}
+                    className="flex items-center justify-between"
+                  >
+                    <div className="flex items-center">
+                      <div className="w-2 h-2 rounded-full bg-blue-600 mr-2"></div>
+                      <span className="text-sm text-gray-700">
+                        {department}
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-sm font-medium text-gray-900">
+                        {count}
+                      </span>
+                      <span className="text-xs text-gray-500 ml-1">
+                        employees
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center">
-                    <span className="text-sm font-medium text-gray-900">
-                      {count}
-                    </span>
-                    <span className="text-xs text-gray-500 ml-1">
-                      employees
-                    </span>
-                  </div>
-                </div>
-              ))}
+                ))
+            ) : (
+              <div className="text-center py-4 text-gray-500">
+                No department data available
+              </div>
+            )}
           </div>
 
           <div className="mt-4 pt-4 border-t border-gray-100">
@@ -452,59 +595,61 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {recentApplications.map((application) => (
-                <tr key={application._id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0 h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-semibold">
-                        {application.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">
-                          {application.name}
+              {recentApplications.length > 0 ? (
+                recentApplications.map((application) => (
+                  <tr key={application._id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="flex-shrink-0 h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-semibold">
+                          {application.name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {application.email}
+                        <div className="ml-3">
+                          <div className="text-sm font-medium text-gray-900">
+                            {application.name}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {application.email}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {application.role}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <span
-                      className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
-                      ${
-                        application.status === "New"
-                          ? "bg-amber-100 text-amber-800"
-                          : application.status === "In Review"
-                          ? "bg-blue-100 text-blue-800"
-                          : application.status === "Shortlisted"
-                          ? "bg-green-100 text-green-800"
-                          : "bg-red-100 text-red-800"
-                      }`}
-                    >
-                      {application.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                    {formatTimeAgo(new Date(application.createdAt))}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                    <Link
-                      href={`/dashboard/careers?id=${application._id}`}
-                      className="text-purple-600 hover:text-purple-900"
-                    >
-                      View
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-
-              {recentApplications.length === 0 && (
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {application.role}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full 
+                        ${
+                          application.status === "New"
+                            ? "bg-amber-100 text-amber-800"
+                            : application.status === "In Review"
+                            ? "bg-blue-100 text-blue-800"
+                            : application.status === "Shortlisted"
+                            ? "bg-green-100 text-green-800"
+                            : application.status === "Hired"
+                            ? "bg-purple-100 text-purple-800"
+                            : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {application.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                      {formatTimeAgo(new Date(application.createdAt))}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                      <Link
+                        href={`/dashboard/careers?id=${application._id}`}
+                        className="text-purple-600 hover:text-purple-900"
+                      >
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
                   <td
                     colSpan={5}
@@ -588,8 +733,52 @@ const StatCard = ({
   icon,
   linkTo,
   color,
-  className = "", // Add className prop with type from interface
+  className = "",
 }: StatCardProps) => {
+  // Safe calculation to handle zero/undefined totals
+  const calculatePercentage = () => {
+    if (!total || total === 0 || isNaN(parseInt(value))) return 0;
+    return Math.round((parseInt(value) / total) * 100);
+  };
+
+  // Use hardcoded class names instead of template strings for Tailwind
+  const getColorClasses = () => {
+    switch (color) {
+      case "purple":
+        return {
+          bg: "bg-purple-100",
+          text: "text-purple-600",
+          hover: "hover:text-purple-700",
+        };
+      case "blue":
+        return {
+          bg: "bg-blue-100",
+          text: "text-blue-600",
+          hover: "hover:text-blue-700",
+        };
+      case "green":
+        return {
+          bg: "bg-green-100",
+          text: "text-green-600",
+          hover: "hover:text-green-700",
+        };
+      case "amber":
+        return {
+          bg: "bg-amber-100",
+          text: "text-amber-600",
+          hover: "hover:text-amber-700",
+        };
+      default:
+        return {
+          bg: "bg-gray-100",
+          text: "text-gray-600",
+          hover: "hover:text-gray-700",
+        };
+    }
+  };
+
+  const colorClasses = getColorClasses();
+
   return (
     <div
       className={`bg-white rounded-lg shadow-sm p-5 flex flex-col h-full ${
@@ -603,26 +792,26 @@ const StatCard = ({
             <p className="text-2xl font-semibold text-gray-900 mt-1">{value}</p>
             {label && (
               <span
-                className={`ml-2 text-xs font-medium text-${color}-600 bg-${color}-100 px-2 py-0.5 rounded`}
+                className={`ml-2 text-xs font-medium ${colorClasses.text} ${colorClasses.bg} px-2 py-0.5 rounded`}
               >
                 {label}
               </span>
             )}
           </div>
-          {total && (
+          {total !== undefined && (
             <p className="text-sm text-gray-500 mt-1">
-              out of {total} ({Math.round((parseInt(value) / total) * 100)}%)
+              out of {total} ({calculatePercentage()}%)
             </p>
           )}
         </div>
-        <div className={`p-2 rounded-md bg-${color}-100 flex-shrink-0`}>
+        <div className={`p-2 rounded-md ${colorClasses.bg} flex-shrink-0`}>
           {icon}
         </div>
       </div>
       <div className="mt-auto pt-2">
         <Link
           href={linkTo}
-          className={`text-${color}-600 text-sm font-medium hover:text-${color}-700 flex items-center`}
+          className={`${colorClasses.text} ${colorClasses.hover} text-sm font-medium flex items-center`}
         >
           View details
           <ChevronRight className="w-4 h-4 ml-1" />

@@ -1252,8 +1252,7 @@ export default function EmployeesPage() {
                             name="salary"
                             value={formData.salary || ""}
                             onChange={handleInputChange}
-                            min="0"
-                            step="1000"
+                            required
                             className="mt-1 block w-full border text-gray-700 border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
                           />
                         </div>

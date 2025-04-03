@@ -1,4 +1,5 @@
 // lib/utils.ts
+import { NextResponse } from "next/server";
 
 /**
  * Format date as string in user's locale
@@ -209,4 +210,13 @@ export function getTimeDifferenceInMinutes(
  */
 export function generateId(prefix = ""): string {
   return `${prefix}${Math.random().toString(36).substring(2, 11)}`;
+}
+
+export function handleApiError(error: unknown, customMessage = "Server error") {
+  console.error(`API Error: ${customMessage}:`, error);
+
+  // Determine if error has a specific message to show
+  const errorMessage = error instanceof Error ? error.message : customMessage;
+
+  return NextResponse.json({ error: errorMessage }, { status: 500 });
 }
