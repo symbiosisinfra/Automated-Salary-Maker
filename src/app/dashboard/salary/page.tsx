@@ -710,6 +710,7 @@ export default function Home() {
         ["Week Off Days", selectedEmployee.calculation.weekOffDays],
         ["Absent Days", selectedEmployee.calculation.absentDays],
         ["CL Days", selectedEmployee.calculation.clDays],
+        ["Holiday Days", selectedEmployee.calculation.holidayDays],
         [""],
         ["SALARY CALCULATION"],
         [
@@ -792,6 +793,7 @@ export default function Home() {
           "Present Days",
           "WFH Days",
           "CL Days",
+          "Holiday Days", // Add this column
           "Week Off Days",
           "Absent Days",
           "Deficit Minutes",
@@ -812,6 +814,7 @@ export default function Home() {
           employee.calculation.presentDays,
           employee.calculation.wfhDays,
           employee.calculation.clDays,
+          employee.calculation.holidayDays, // Add this value
           employee.calculation.weekOffDays,
           employee.calculation.absentDays,
           employee.calculation.totalDeficitMinutes,
@@ -840,6 +843,7 @@ export default function Home() {
           ["Present Days", employee.calculation.presentDays],
           ["WFH Days", employee.calculation.wfhDays],
           ["CL Days", employee.calculation.clDays],
+          ["Holiday Days", employee.calculation.holidayDays], // Add this line
           ["Week Off Days", employee.calculation.weekOffDays],
           ["Absent Days", employee.calculation.absentDays],
           [""],
@@ -985,7 +989,6 @@ export default function Home() {
         { align: "center" }
       );
 
-      // Week Off days (gray box)
       doc.setFillColor(220, 220, 220);
       doc.rect(106, startY, 45, 25, "F");
       doc.setFontSize(12);
@@ -999,17 +1002,31 @@ export default function Home() {
         { align: "center" }
       );
 
-      // Absent days (red box)
-      doc.setFillColor(250, 200, 200);
+      // Holiday days (indigo box) - Add this section
+      doc.setFillColor(200, 190, 240); // Light indigo color
       doc.rect(154, startY, 45, 25, "F");
       doc.setFontSize(12);
       doc.setFont("helvetica", "bold");
-      doc.text("Absent", 176.5, startY + 8, { align: "center" });
+      doc.text("Holidays", 176.5, startY + 8, { align: "center" });
+      doc.setFontSize(16);
+      doc.text(
+        selectedEmployee.calculation.holidayDays.toString(),
+        176.5,
+        startY + 18,
+        { align: "center" }
+      );
+
+      // Absent days (red box) - Move this down
+      doc.setFillColor(250, 200, 200);
+      doc.rect(10, startY + 30, 45, 25, "F"); // Adjust Y position
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Absent", 32.5, startY + 38, { align: "center" }); // Adjust Y position
       doc.setFontSize(16);
       doc.text(
         selectedEmployee.calculation.absentDays.toString(),
-        176.5,
-        startY + 18,
+        32.5,
+        startY + 48, // Adjust Y position
         { align: "center" }
       );
 
@@ -1553,6 +1570,11 @@ export default function Home() {
           `Casual Leave: ${employee.calculation.clDays}`,
           80,
           boxStartY + boxHeight + 90
+        );
+        doc.text(
+          `Holidays: ${employee.calculation.holidayDays}`, // Add this line
+          80,
+          boxStartY + boxHeight + 100
         );
         doc.text(
           `Week Off: ${employee.calculation.weekOffDays}`,
