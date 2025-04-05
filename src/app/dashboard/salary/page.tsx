@@ -30,7 +30,7 @@ interface DayAttendance {
   date: string;
   inTime: string | null;
   outTime: string | null;
-  status: "Present" | "Absent" | "WFH" | "Week Off" | "CL";
+  status: "Present" | "Absent" | "WFH" | "Week Off" | "CL" | "Holiday";
   deficitMinutes: number;
   isLate?: boolean;
   lateBy?: number;
@@ -46,6 +46,7 @@ interface SalaryCalculation {
   weekOffDays: number;
   absentDays: number;
   clDays: number; // Added CL (Casual Leave) days
+  holidayDays: number; // Add this line
   totalDeficitMinutes: number;
   bufferApplied: number;
   daysWithBuffer: string[];
@@ -279,6 +280,12 @@ export default function Home() {
         ) {
           return "CL";
         }
+        if (
+          timeInput === "Holiday" ||
+          timeInput.toLowerCase().includes("holiday")
+        ) {
+          return "Holiday";
+        }
 
         // Handle time formats: if already in HH:MM format
         if (timeInput.match(/^\d{1,2}:\d{2}(:\d{2})?$/)) {
@@ -380,8 +387,13 @@ export default function Home() {
           const dayKey = day.toString();
           if (row[day] !== undefined) {
             // Determine status based on the value
-            let status: "Present" | "Absent" | "WFH" | "Week Off" | "CL" =
-              "Present";
+            let status:
+              | "Present"
+              | "Absent"
+              | "WFH"
+              | "Week Off"
+              | "CL"
+              | "Holiday" = "Present";
 
             if (typeof row[day] === "string") {
               const cellValue = row[day].toString();
@@ -402,6 +414,11 @@ export default function Home() {
                 cellValue.toLowerCase().includes("casual leave")
               ) {
                 status = "CL";
+              } else if (
+                cellValue === "Holiday" ||
+                cellValue.toLowerCase().includes("holiday")
+              ) {
+                status = "Holiday";
               }
             }
 
@@ -490,7 +507,8 @@ export default function Home() {
             if (
               attendance.status === "Week Off" ||
               attendance.status === "WFH" ||
-              attendance.status === "CL"
+              attendance.status === "CL" ||
+              attendance.status === "Holiday" // Add this condition
             ) {
               // No deficit for week off, WFH, or CL (paid leave)
               attendance.deficitMinutes = 0;
@@ -604,6 +622,9 @@ export default function Home() {
     const clDays = Object.values(employee.attendance).filter(
       (att) => att.status === "CL"
     ).length;
+    const holidayDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "Holiday"
+    ).length;
 
     const totalDays = Object.keys(employee.attendance).length;
     const workingDays = totalDays - weekOffDays;
@@ -654,6 +675,7 @@ export default function Home() {
       weekOffDays,
       absentDays,
       clDays,
+      holidayDays,
       totalDeficitMinutes,
       bufferApplied,
       daysWithBuffer: bufferDaysForEmployee,
