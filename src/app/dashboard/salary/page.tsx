@@ -85,12 +85,10 @@ export default function Home() {
   const [year, setYear] = useState<string>("");
   const [employeeFilter, setEmployeeFilter] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
-  const [manualBufferDays, setManualBufferDays] = useState<
-    Record<number, string[]>
-  >({});
+  // Remove the manualBufferDays state
   const tableRef = useRef<HTMLDivElement>(null);
 
-  // Process file upload
+  // Process file upload with removal of manual buffer selection
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -135,23 +133,6 @@ export default function Home() {
       const extractedEmployees = processEmployeeData(jsonData, daysInMonth);
       setEmployees(extractedEmployees);
 
-      // Initialize manual buffer days for new employees
-      const initialManualBufferDays: Record<number, string[]> = {};
-      extractedEmployees.forEach((employee) => {
-        // If we don't have selections for this employee yet, initialize with empty array
-        if (!manualBufferDays[employee.id]) {
-          initialManualBufferDays[employee.id] = [];
-        }
-      });
-
-      // Only set if we have new employees
-      if (Object.keys(initialManualBufferDays).length > 0) {
-        setManualBufferDays((prev) => ({
-          ...prev,
-          ...initialManualBufferDays,
-        }));
-      }
-
       // Select the first employee by default if available
       if (extractedEmployees.length > 0) {
         setSelectedEmployee(extractedEmployees[0]);
@@ -163,53 +144,6 @@ export default function Home() {
       setLoading(false);
     }
   };
-
-  // Helper functions for manual buffer selection
-  const getSelectedBufferDaysCount = (employeeId: number) => {
-    return manualBufferDays[employeeId]?.length || 0;
-  };
-
-  const toggleBufferDay = (employeeId: number, day: string) => {
-    const currentBufferDays = manualBufferDays[employeeId] || [];
-
-    // If already selected, remove it
-    if (currentBufferDays.includes(day)) {
-      setManualBufferDays({
-        ...manualBufferDays,
-        [employeeId]: currentBufferDays.filter((d) => d !== day),
-      });
-    }
-    // Otherwise add it if we haven't reached the maximum
-    else if (currentBufferDays.length < MAX_BUFFER_DAYS) {
-      setManualBufferDays({
-        ...manualBufferDays,
-        [employeeId]: [...currentBufferDays, day],
-      });
-    }
-  };
-
-  // Update employee calculations when buffer selections change
-  useEffect(() => {
-    if (employees.length > 0) {
-      // Recalculate salaries with manually selected buffer days
-      const updatedEmployees = employees.map((employee) => {
-        const calculation = calculateSalary(employee);
-        return { ...employee, calculation };
-      });
-
-      setEmployees(updatedEmployees);
-
-      // Update selected employee if needed
-      if (selectedEmployee) {
-        const updatedSelectedEmployee = updatedEmployees.find(
-          (emp) => emp.id === selectedEmployee.id
-        );
-        if (updatedSelectedEmployee) {
-          setSelectedEmployee(updatedSelectedEmployee);
-        }
-      }
-    }
-  }, [manualBufferDays]);
 
   // Detect days in month dynamically based on column headers
   const detectDaysInMonth = (data: any[]): number => {
@@ -379,6 +313,7 @@ export default function Home() {
             deduction: 0,
             finalSalary: 0,
             perMinuteRate: 0,
+            holidayDays: 0,
           },
         };
 
@@ -600,7 +535,7 @@ export default function Home() {
     return employees;
   };
 
-  // Complete fixed calculateSalary function with manual buffer selection
+  // Modified calculateSalary function with automated buffer selection
   const calculateSalary = (employee: Employee): SalaryCalculation => {
     // Count different day types
     const presentDays = Object.values(employee.attendance).filter(
@@ -622,6 +557,7 @@ export default function Home() {
     const clDays = Object.values(employee.attendance).filter(
       (att) => att.status === "CL"
     ).length;
+
     const holidayDays = Object.values(employee.attendance).filter(
       (att) => att.status === "Holiday"
     ).length;
@@ -635,19 +571,25 @@ export default function Home() {
       0
     );
 
-    // MANUAL BUFFER APPLICATION LOGIC
-    const bufferDaysForEmployee = manualBufferDays[employee.id] || [];
-    let bufferApplied = 0;
+    // AUTOMATED BUFFER APPLICATION LOGIC
+    // Find all days with deficit minutes (only Present days)
+    const daysWithDeficit = Object.entries(employee.attendance)
+      .filter(([_, att]) => att.status === "Present" && att.deficitMinutes > 0)
+      // Sort by deficit minutes (lowest first)
+      .sort(([_, a], [__, b]) => a.deficitMinutes - b.deficitMinutes);
 
-    // Calculate buffer from the manually selected days
-    bufferDaysForEmployee.forEach((day) => {
+    // Take up to MAX_BUFFER_DAYS (3) days with the lowest deficit
+    const selectedBufferDays = daysWithDeficit
+      .slice(0, MAX_BUFFER_DAYS)
+      .map(([day]) => day);
+
+    // Calculate buffer from the automatically selected days
+    let bufferApplied = 0;
+    selectedBufferDays.forEach((day) => {
       if (employee.attendance[day]) {
         const att = employee.attendance[day];
-        // Apply buffer to any day with deficit minutes (both late arrivals and early departures)
-        if (att.status === "Present" && att.deficitMinutes > 0) {
-          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
-          bufferApplied += Math.min(att.deficitMinutes, BUFFER_MINUTES);
-        }
+        // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
+        bufferApplied += Math.min(att.deficitMinutes, BUFFER_MINUTES);
       }
     });
 
@@ -678,7 +620,7 @@ export default function Home() {
       holidayDays,
       totalDeficitMinutes,
       bufferApplied,
-      daysWithBuffer: bufferDaysForEmployee,
+      daysWithBuffer: selectedBufferDays,
       finalDeficit,
       deduction,
       finalSalary,
@@ -1940,7 +1882,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Attendance Details with manual buffer selection */}
               <div ref={tableRef}>
                 <h3 className="text-lg font-semibold mb-3 flex items-center">
                   <Calendar className="mr-2 text-purple-600 w-5 h-5" />
@@ -1949,10 +1890,10 @@ export default function Home() {
 
                 <div className="bg-yellow-50 p-3 mb-4 rounded-lg border border-yellow-200">
                   <p className="text-sm text-yellow-800">
-                    <strong>Buffer Selection:</strong> Check the boxes below to
-                    apply buffer for any day with deficit minutes (up to{" "}
-                    {MAX_BUFFER_DAYS} days). You can apply buffer to days with
-                    late arrivals, early departures, or both.
+                    <strong>Automated Buffer Application:</strong> Buffer is
+                    automatically applied to up to {MAX_BUFFER_DAYS} days with
+                    the lowest deficit minutes. This optimizes your salary by
+                    minimizing deductions.
                   </p>
                 </div>
 
@@ -1976,7 +1917,7 @@ export default function Home() {
                           Deficit
                         </th>
                         <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
-                          Apply Buffer
+                          Buffer Status
                         </th>
                       </tr>
                     </thead>
@@ -1988,10 +1929,6 @@ export default function Home() {
                             selectedEmployee.calculation.daysWithBuffer.includes(
                               day
                             );
-
-                          // Get the count of currently selected buffer days
-                          const selectedBufferCount =
-                            getSelectedBufferDaysCount(selectedEmployee.id);
 
                           return (
                             <tr
@@ -2052,34 +1989,20 @@ export default function Home() {
                               <td className="py-2 px-3 text-sm">
                                 {att.status === "Present" &&
                                 att.deficitMinutes > 0 ? (
-                                  <div className="flex items-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={isBufferApplied}
-                                      disabled={
-                                        !isBufferApplied &&
-                                        selectedBufferCount >= MAX_BUFFER_DAYS
-                                      }
-                                      onChange={() =>
-                                        toggleBufferDay(
-                                          selectedEmployee.id,
-                                          day
-                                        )
-                                      }
-                                      className="h-4 w-4 text-purple-600 focus:ring-purple-500 rounded"
-                                    />
-                                    <span className="ml-2 text-xs text-green-600">
-                                      {isBufferApplied
-                                        ? `Applied (${Math.min(
-                                            att.deficitMinutes,
-                                            BUFFER_MINUTES
-                                          )} mins)`
-                                        : selectedBufferCount >=
-                                            MAX_BUFFER_DAYS && !isBufferApplied
-                                        ? "Limit reached"
-                                        : "Eligible"}
-                                    </span>
-                                  </div>
+                                  <span
+                                    className={`px-2 py-1 rounded-full text-xs ${
+                                      isBufferApplied
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-gray-100 text-gray-600"
+                                    }`}
+                                  >
+                                    {isBufferApplied
+                                      ? `Buffer Applied (${Math.min(
+                                          att.deficitMinutes,
+                                          BUFFER_MINUTES
+                                        )} mins)`
+                                      : "No Buffer"}
+                                  </span>
                                 ) : (
                                   <span className="text-gray-400">-</span>
                                 )}
