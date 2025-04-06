@@ -1,4 +1,3 @@
-// pages/index.tsx
 "use client";
 import { useEffect, useState, useRef } from "react";
 import * as XLSX from "xlsx";
@@ -38,6 +37,7 @@ interface DayAttendance {
   earlyBy?: number;
 }
 
+// Final SalaryCalculation interface with absent day deductions
 interface SalaryCalculation {
   totalDays: number;
   workingDays: number;
@@ -45,15 +45,27 @@ interface SalaryCalculation {
   wfhDays: number;
   weekOffDays: number;
   absentDays: number;
-  clDays: number; // Added CL (Casual Leave) days
-  holidayDays: number; // Add this line
+  clDays: number;
+  holidayDays: number;
   totalDeficitMinutes: number;
   bufferApplied: number;
   daysWithBuffer: string[];
   finalDeficit: number;
+  perDaySalary: number;
+  absentDeduction: number;
+  deficitDeduction: number;
+  pipDeduction: number;
   deduction: number;
   finalSalary: number;
   perMinuteRate: number;
+  isPIP: boolean;
+
+  // New properties for special cases
+  isSpecialDepartment?: boolean; // RUNNER, PANTRY BOY, PANTRY GIRL
+  isKishan?: boolean; // Special employee Kishan
+  totalWorkedMinutes?: number; // Total minutes worked for special departments
+  totalExtraMinutes?: number; // Extra minutes beyond standard hours
+  specialDepartmentSalary?: number; // Salary based on minutes for special departments
 }
 
 // Constants
@@ -164,7 +176,229 @@ export default function Home() {
     return dayColumns.length > 0 ? Math.max(...dayColumns) : 31;
   };
 
-  // Process employee data from Excel
+  const calculateDeficitMinutes = (attendance: DayAttendance): number => {
+    if (attendance.status !== "Present") {
+      return 0; // No deficit for non-Present days
+    }
+
+    // Only count late arrivals, not early departures
+    if (attendance.isLate && attendance.lateBy) {
+      return attendance.lateBy;
+    }
+
+    return 0;
+  };
+
+  // Special department and employee exceptions for salary calculation
+  const calculateSalary = (employee: Employee): SalaryCalculation => {
+    // Count different day types
+    const presentDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "Present"
+    ).length;
+
+    const wfhDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "WFH"
+    ).length;
+
+    const weekOffDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "Week Off"
+    ).length;
+
+    const absentDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "Absent"
+    ).length;
+
+    const clDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "CL"
+    ).length;
+
+    const holidayDays = Object.values(employee.attendance).filter(
+      (att) => att.status === "Holiday"
+    ).length;
+
+    // Total days should be the actual days in the month
+    const totalDays = maxDaysInMonth;
+
+    // Calculate working days - should be totalDays minus weekends/holidays
+    const workingDays = totalDays - weekOffDays - holidayDays;
+
+    // Calculate per day salary - use actual days in month
+    const perDaySalary = employee.salary / totalDays;
+
+    // Check for special departments (RUNNER, PANTRY BOY, PANTRY GIRL)
+    const isSpecialDepartment = [
+      "RUNNER",
+      "PANTRY BOY",
+      "PANTRY GIRL",
+    ].includes(employee.department.toUpperCase());
+
+    // Check for special employee - Kishan (can leave early after 6:00 PM)
+    const isKishan = employee.name.toLowerCase().includes("kishan");
+
+    // Calculate total worked minutes and deficit minutes
+    let totalWorkedMinutes = 0;
+    let totalDeficitMinutes = 0;
+    let totalExtraMinutes = 0; // For special departments, extra time worked
+
+    Object.values(employee.attendance).forEach((att) => {
+      if (att.status === "Present" && att.inTime && att.outTime) {
+        try {
+          const inTimeParts = att.inTime.split(":").map(Number);
+          const outTimeParts = att.outTime.split(":").map(Number);
+
+          // Calculate minutes worked
+          const inMinutes = inTimeParts[0] * 60 + inTimeParts[1];
+          const outMinutes = outTimeParts[0] * 60 + outTimeParts[1];
+
+          // Expected times
+          const expectedInMinutes = OFFICE_START_HOUR * 60; // 10:00 AM
+          const expectedOutMinutes = OFFICE_END_HOUR * 60 + OFFICE_END_MINUTE; // 18:30 PM
+
+          // Special handling for different cases
+          if (isSpecialDepartment) {
+            // For special departments, count all minutes worked including before 10 AM and after 6:30 PM
+            const minutesWorked = Math.max(0, outMinutes - inMinutes);
+            totalWorkedMinutes += minutesWorked;
+
+            // Also track extra minutes (beyond standard hours) for reference
+            const standardMinutes = expectedOutMinutes - expectedInMinutes;
+            if (minutesWorked > standardMinutes) {
+              totalExtraMinutes += minutesWorked - standardMinutes;
+            }
+          } else {
+            // Regular employees
+            // Check if late or early
+            const isLate = inMinutes > expectedInMinutes;
+            const lateBy = isLate ? inMinutes - expectedInMinutes : 0;
+
+            // Special case for Kishan - no deduction if leaving after 6:00 PM
+            const earlyKishanThreshold = (OFFICE_END_HOUR - 0.5) * 60; // 6:00 PM in minutes (18:00)
+
+            let earlyBy = 0;
+            if (outMinutes < expectedOutMinutes) {
+              // For Kishan, only count early minutes if before 6:00 PM
+              if (isKishan && outMinutes >= earlyKishanThreshold) {
+                earlyBy = 0; // No penalty for Kishan leaving between 6:00-6:30 PM
+              } else {
+                earlyBy = expectedOutMinutes - outMinutes;
+              }
+            }
+
+            // Add to deficit
+            totalDeficitMinutes += lateBy + earlyBy;
+          }
+        } catch (error) {
+          console.error("Error calculating minutes:", error);
+        }
+      }
+    });
+
+    // Calculate deduction for absent days
+    const absentDeduction = Math.round(perDaySalary * absentDays);
+
+    // AUTOMATED BUFFER APPLICATION LOGIC - ONLY for late arrivals
+    // Only applicable for regular employees, not special departments
+    let bufferApplied = 0;
+    let selectedBufferDays: string[] = [];
+
+    if (!isSpecialDepartment) {
+      // Find all days with late arrivals
+      const daysWithLate = Object.entries(employee.attendance)
+        .filter(
+          ([_, att]) =>
+            att.status === "Present" &&
+            att.isLate &&
+            att.lateBy &&
+            att.lateBy > 0
+        )
+        // Sort by late minutes (lowest first)
+        .sort(([_, a], [__, b]) => (a.lateBy || 0) - (b.lateBy || 0));
+
+      // Take up to MAX_BUFFER_DAYS (3) days with the lowest late arrivals
+      selectedBufferDays = daysWithLate
+        .slice(0, MAX_BUFFER_DAYS)
+        .map(([day]) => day);
+
+      // Calculate buffer from the automatically selected days
+      selectedBufferDays.forEach((day) => {
+        if (employee.attendance[day] && employee.attendance[day].isLate) {
+          const att = employee.attendance[day];
+          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
+          bufferApplied += Math.min(att.lateBy || 0, BUFFER_MINUTES);
+        }
+      });
+    }
+
+    // Calculate final deficit after buffer for regular employees
+    const finalDeficit = isSpecialDepartment
+      ? 0
+      : Math.max(0, totalDeficitMinutes - bufferApplied);
+
+    // Calculate per minute rate
+    const perMinuteRate =
+      Math.floor((perDaySalary / EXPECTED_WORK_MINUTES) * 100) / 100;
+
+    // Calculate deficit deduction for regular employees
+    const deficitDeduction = isSpecialDepartment
+      ? 0
+      : Math.round(finalDeficit * perMinuteRate);
+
+    // Special calculation for RUNNER, PANTRY BOY, PANTRY GIRL
+    let specialDepartmentSalary = 0;
+    if (isSpecialDepartment) {
+      // Calculate salary based on total minutes worked
+      specialDepartmentSalary = Math.round(totalWorkedMinutes * perMinuteRate);
+    }
+
+    // Check if employee is on PIP and apply 40% additional deduction
+    const isPIP = employee.department.toLowerCase().includes("pip");
+    const pipDeduction = isPIP ? Math.round(employee.salary * 0.4) : 0;
+
+    // Total deduction and final salary
+    let totalDeduction = 0;
+    let finalSalary = 0;
+
+    if (isSpecialDepartment) {
+      // For special departments, salary is directly based on minutes worked
+      finalSalary = specialDepartmentSalary;
+      // No deductions since we're calculating salary based on minutes worked
+      totalDeduction = employee.salary - specialDepartmentSalary;
+    } else {
+      // Regular employees - deduct absent days, deficit minutes, and PIP
+      totalDeduction = absentDeduction + deficitDeduction + pipDeduction;
+      finalSalary = employee.salary - totalDeduction;
+    }
+
+    return {
+      totalDays,
+      workingDays,
+      presentDays,
+      wfhDays,
+      weekOffDays,
+      absentDays,
+      clDays,
+      holidayDays,
+      totalDeficitMinutes,
+      bufferApplied,
+      daysWithBuffer: selectedBufferDays,
+      finalDeficit,
+      perDaySalary,
+      absentDeduction,
+      deficitDeduction,
+      pipDeduction,
+      deduction: totalDeduction,
+      finalSalary,
+      perMinuteRate,
+      isPIP,
+      isSpecialDepartment,
+      isKishan,
+      totalWorkedMinutes,
+      totalExtraMinutes,
+      specialDepartmentSalary,
+    };
+  };
+
+  // Updated processEmployeeData function to handle mid-month joiners
   const processEmployeeData = (
     data: any[],
     daysInMonth: number
@@ -368,6 +602,21 @@ export default function Home() {
               status,
               deficitMinutes: 0, // Will be calculated later
             };
+          } else {
+            // Handle days with no value - important for mid-month joiners
+            // If cell is empty, set as Absent for days before they joined
+            if (!currentEmployee.attendance) currentEmployee.attendance = {};
+
+            // Only add if the day doesn't already exist in attendance
+            if (!currentEmployee.attendance[dayKey]) {
+              currentEmployee.attendance[dayKey] = {
+                date: `Day ${day}`,
+                inTime: null,
+                outTime: null,
+                status: "Absent", // Mark as absent for days before joining
+                deficitMinutes: 0, // No deficit for days before joining
+              };
+            }
           }
         }
 
@@ -380,7 +629,8 @@ export default function Home() {
             const dayKey = day.toString();
             if (
               currentEmployee.attendance &&
-              currentEmployee.attendance[dayKey]
+              currentEmployee.attendance[dayKey] &&
+              currentEmployee.attendance[dayKey].status === "Present" // Only process out times for present days
             ) {
               let outTimeValue = outRow[day];
 
@@ -433,6 +683,7 @@ export default function Home() {
           // Skip the out-time row in the next iteration
           i++;
         }
+
         // Calculate deficits for each day and add metadata for late/early
         if (currentEmployee.attendance) {
           Object.keys(currentEmployee.attendance).forEach((day) => {
@@ -535,100 +786,7 @@ export default function Home() {
     return employees;
   };
 
-  // Modified calculateSalary function with automated buffer selection
-  const calculateSalary = (employee: Employee): SalaryCalculation => {
-    // Count different day types
-    const presentDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "Present"
-    ).length;
-
-    const wfhDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "WFH"
-    ).length;
-
-    const weekOffDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "Week Off"
-    ).length;
-
-    const absentDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "Absent"
-    ).length;
-
-    const clDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "CL"
-    ).length;
-
-    const holidayDays = Object.values(employee.attendance).filter(
-      (att) => att.status === "Holiday"
-    ).length;
-
-    const totalDays = Object.keys(employee.attendance).length;
-    const workingDays = totalDays - weekOffDays;
-
-    // Get total deficit minutes from ALL days (including Absent days)
-    const totalDeficitMinutes = Object.values(employee.attendance).reduce(
-      (total, att) => total + att.deficitMinutes,
-      0
-    );
-
-    // AUTOMATED BUFFER APPLICATION LOGIC
-    // Find all days with deficit minutes (only Present days)
-    const daysWithDeficit = Object.entries(employee.attendance)
-      .filter(([_, att]) => att.status === "Present" && att.deficitMinutes > 0)
-      // Sort by deficit minutes (lowest first)
-      .sort(([_, a], [__, b]) => a.deficitMinutes - b.deficitMinutes);
-
-    // Take up to MAX_BUFFER_DAYS (3) days with the lowest deficit
-    const selectedBufferDays = daysWithDeficit
-      .slice(0, MAX_BUFFER_DAYS)
-      .map(([day]) => day);
-
-    // Calculate buffer from the automatically selected days
-    let bufferApplied = 0;
-    selectedBufferDays.forEach((day) => {
-      if (employee.attendance[day]) {
-        const att = employee.attendance[day];
-        // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
-        bufferApplied += Math.min(att.deficitMinutes, BUFFER_MINUTES);
-      }
-    });
-
-    // Calculate final deficit after buffer
-    const finalDeficit = Math.max(0, totalDeficitMinutes - bufferApplied);
-
-    // Calculate daily salary rate
-    const dailySalary = employee.salary / totalDays;
-
-    // IMPROVED RATE CALCULATION - TRUNCATE to 2 decimal places
-    const perMinuteRate =
-      Math.floor((dailySalary / EXPECTED_WORK_MINUTES) * 100) / 100;
-
-    // Calculate deduction
-    const deduction = Math.round(finalDeficit * perMinuteRate);
-
-    // Calculate final salary
-    const finalSalary = employee.salary - deduction;
-
-    return {
-      totalDays,
-      workingDays,
-      presentDays,
-      wfhDays,
-      weekOffDays,
-      absentDays,
-      clDays,
-      holidayDays,
-      totalDeficitMinutes,
-      bufferApplied,
-      daysWithBuffer: selectedBufferDays,
-      finalDeficit,
-      deduction,
-      finalSalary,
-      perMinuteRate,
-    };
-  };
-
-  // Export to Excel (for single employee)
+  // Complete Export to Excel (for single employee)
   const exportToExcel = () => {
     if (!selectedEmployee) return;
 
@@ -638,32 +796,162 @@ export default function Home() {
       // Create a new workbook
       const wb = XLSX.utils.book_new();
 
+      // Check if this is a special department employee
+      const isSpecialDepartment =
+        selectedEmployee.calculation.isSpecialDepartment;
+      const isKishan = selectedEmployee.calculation.isKishan;
+
       // Prepare employee summary data
       const summaryData = [
         ["Employee Name", selectedEmployee.name],
         ["Department", selectedEmployee.department],
-        ["Base Salary", selectedEmployee.salary],
-        [""],
-        ["ATTENDANCE SUMMARY"],
-        ["Total Days", selectedEmployee.calculation.totalDays],
-        ["Working Days", selectedEmployee.calculation.workingDays],
-        ["Present Days", selectedEmployee.calculation.presentDays],
-        ["WFH Days", selectedEmployee.calculation.wfhDays],
-        ["Week Off Days", selectedEmployee.calculation.weekOffDays],
-        ["Absent Days", selectedEmployee.calculation.absentDays],
-        ["CL Days", selectedEmployee.calculation.clDays],
-        ["Holiday Days", selectedEmployee.calculation.holidayDays],
-        [""],
-        ["SALARY CALCULATION"],
-        [
-          "Total Deficit Minutes",
-          selectedEmployee.calculation.totalDeficitMinutes,
-        ],
-        ["Buffer Applied", selectedEmployee.calculation.bufferApplied],
-        ["Final Deficit", selectedEmployee.calculation.finalDeficit],
-        ["Deduction Amount", selectedEmployee.calculation.deduction],
-        ["Final Salary", selectedEmployee.calculation.finalSalary],
+        ["Base Salary", `₹${selectedEmployee.salary.toLocaleString("en-IN")}`],
       ];
+
+      // Add special status indicators if applicable
+      if (isSpecialDepartment) {
+        summaryData.push([
+          "Special Department",
+          "Yes - Paid by minutes worked",
+        ]);
+      }
+      if (isKishan) {
+        summaryData.push([
+          "Special Employee",
+          "Yes - Kishan can leave after 6:00 PM",
+        ]);
+      }
+
+      summaryData.push([""]); // Empty row
+
+      // Add attendance summary
+      summaryData.push(["ATTENDANCE SUMMARY"]);
+      summaryData.push(["Total Days", selectedEmployee.calculation.totalDays]);
+      summaryData.push([
+        "Working Days",
+        selectedEmployee.calculation.workingDays,
+      ]);
+      summaryData.push([
+        "Present Days",
+        selectedEmployee.calculation.presentDays,
+      ]);
+      summaryData.push(["WFH Days", selectedEmployee.calculation.wfhDays]);
+      summaryData.push([
+        "Week Off Days",
+        selectedEmployee.calculation.weekOffDays,
+      ]);
+      summaryData.push([
+        "Absent Days",
+        selectedEmployee.calculation.absentDays,
+      ]);
+      summaryData.push(["CL Days", selectedEmployee.calculation.clDays]);
+      summaryData.push([
+        "Holiday Days",
+        selectedEmployee.calculation.holidayDays,
+      ]);
+
+      summaryData.push([""]); // Empty row
+
+      // Add salary calculation section
+      summaryData.push(["SALARY CALCULATION"]);
+
+      if (isSpecialDepartment) {
+        // Special department salary calculation
+        summaryData.push([
+          "Total Minutes Worked",
+          `${selectedEmployee.calculation.totalWorkedMinutes} mins`,
+        ]);
+        summaryData.push([
+          "Extra Minutes Beyond Standard",
+          `${selectedEmployee.calculation.totalExtraMinutes} mins`,
+        ]);
+        summaryData.push([
+          "Standard Work Minutes (if full days)",
+          `${
+            EXPECTED_WORK_MINUTES * selectedEmployee.calculation.presentDays
+          } mins`,
+        ]);
+        summaryData.push([
+          "Per Minute Rate",
+          `₹${selectedEmployee.calculation.perMinuteRate.toFixed(2)}`,
+        ]);
+        summaryData.push([
+          "Final Salary (Based on Minutes)",
+          `₹${selectedEmployee.calculation.finalSalary.toLocaleString(
+            "en-IN"
+          )}`,
+        ]);
+      } else {
+        // Regular employee salary calculation
+        summaryData.push([
+          "Per Day Salary",
+          `₹${selectedEmployee.calculation.perDaySalary.toLocaleString(
+            "en-IN"
+          )}`,
+        ]);
+        summaryData.push([
+          "Per Minute Rate",
+          `₹${selectedEmployee.calculation.perMinuteRate.toFixed(2)}`,
+        ]);
+
+        summaryData.push([""]); // Empty row
+
+        summaryData.push(["DEDUCTIONS"]);
+        summaryData.push([
+          "Absent Day Deduction",
+          `₹${selectedEmployee.calculation.absentDeduction.toLocaleString(
+            "en-IN"
+          )}`,
+        ]);
+
+        if (isKishan) {
+          summaryData.push([
+            "Special Note",
+            "No deduction for leaving after 6:00 PM",
+          ]);
+        }
+
+        summaryData.push([
+          "Total Deficit Minutes",
+          `${selectedEmployee.calculation.totalDeficitMinutes} mins`,
+        ]);
+        summaryData.push([
+          "Buffer Applied",
+          `${selectedEmployee.calculation.bufferApplied} mins`,
+        ]);
+        summaryData.push([
+          "Final Deficit",
+          `${selectedEmployee.calculation.finalDeficit} mins`,
+        ]);
+        summaryData.push([
+          "Late/Early Deduction",
+          `₹${selectedEmployee.calculation.deficitDeduction.toLocaleString(
+            "en-IN"
+          )}`,
+        ]);
+
+        // Add PIP deduction if applicable
+        if (selectedEmployee.calculation.isPIP) {
+          summaryData.push([
+            "PIP Deduction (40%)",
+            `₹${selectedEmployee.calculation.pipDeduction.toLocaleString(
+              "en-IN"
+            )}`,
+          ]);
+        }
+
+        summaryData.push([
+          "Total Deduction",
+          `₹${selectedEmployee.calculation.deduction.toLocaleString("en-IN")}`,
+        ]);
+
+        summaryData.push([
+          "Final Salary",
+          `₹${selectedEmployee.calculation.finalSalary.toLocaleString(
+            "en-IN"
+          )}`,
+        ]);
+      }
 
       // Create summary worksheet
       const summaryWS = XLSX.utils.aoa_to_sheet(summaryData);
@@ -676,7 +964,9 @@ export default function Home() {
           "Status",
           "In Time",
           "Out Time",
-          "Deficit (mins)",
+          "Late (mins)",
+          "Early (mins)",
+          "Total Deficit",
           "Buffer Applied",
         ],
       ];
@@ -687,13 +977,38 @@ export default function Home() {
         .forEach(([day, att]) => {
           const isBufferApplied =
             selectedEmployee.calculation.daysWithBuffer.includes(day);
+          const lateMinutes = att.isLate && att.lateBy > 0 ? att.lateBy : 0;
+
+          // Handle Kishan's special case for early departures
+          let earlyMinutes = 0;
+          if (att.isEarly && att.earlyBy) {
+            if (isKishan && att.outTime) {
+              // Check if Kishan left after 6:00 PM (no deduction)
+              const outTimeParts = att.outTime.split(":").map(Number);
+              const outMinutes = outTimeParts[0] * 60 + outTimeParts[1];
+              const sixPM = 18 * 60; // 6:00 PM in minutes
+
+              if (outMinutes >= sixPM) {
+                earlyMinutes = 0; // No deduction if after 6:00 PM
+              } else {
+                earlyMinutes = att.earlyBy;
+              }
+            } else {
+              earlyMinutes = att.earlyBy;
+            }
+          }
+
+          const totalDeficit = lateMinutes + earlyMinutes;
+
           attendanceData.push([
             att.date,
             att.status,
             att.inTime || "-",
             att.outTime || "-",
-            att.deficitMinutes > 0 ? att.deficitMinutes : 0,
-            isBufferApplied ? "Yes" : "No",
+            lateMinutes,
+            earlyMinutes,
+            isSpecialDepartment ? "-" : totalDeficit, // No deficit for special departments
+            isSpecialDepartment ? "N/A" : isBufferApplied ? "Yes" : "No",
           ]);
         });
 
@@ -715,7 +1030,7 @@ export default function Home() {
     }
   };
 
-  // Export all employees to Excel
+  // Complete Export all employees to Excel
   const exportAllToExcel = () => {
     if (employees.length === 0) return;
 
@@ -725,47 +1040,81 @@ export default function Home() {
       // Create a new workbook
       const wb = XLSX.utils.book_new();
 
+      // Calculate grand total of all salaries
+      const grandTotal = employees.reduce(
+        (total, emp) => total + emp.calculation.finalSalary,
+        0
+      );
+
       // Create summary sheet for all employees
       const summaryData = [
         [
           "Employee ID",
           "Name",
           "Department",
-          "Base Salary",
-          "Present Days",
-          "WFH Days",
-          "CL Days",
-          "Holiday Days", // Add this column
-          "Week Off Days",
-          "Absent Days",
-          "Deficit Minutes",
-          "Buffer Applied",
-          "Final Deficit",
-          "Deduction",
-          "Final Salary",
+          "Special Type",
+          "Base Salary (₹)",
+          "Calculation Method",
+          "Absent Deduction (₹)",
+          "Late/Early Deduction (₹)",
+          "PIP Deduction (₹)",
+          "Total Deduction (₹)",
+          "Final Salary (₹)",
         ],
       ];
 
       // Add data for each employee
       employees.forEach((employee) => {
+        const isSpecialDepartment = employee.calculation.isSpecialDepartment;
+        const isKishan = employee.calculation.isKishan;
+
+        // Determine special type
+        let specialType = "-";
+        if (isSpecialDepartment) specialType = "Special Department";
+        else if (isKishan) specialType = "Special Employee (Kishan)";
+
+        // Determine calculation method
+        const calculationMethod = isSpecialDepartment
+          ? "Minutes Worked"
+          : "Standard";
+
         summaryData.push([
           employee.id,
           employee.name,
           employee.department,
-          employee.salary,
-          employee.calculation.presentDays,
-          employee.calculation.wfhDays,
-          employee.calculation.clDays,
-          employee.calculation.holidayDays, // Add this value
-          employee.calculation.weekOffDays,
-          employee.calculation.absentDays,
-          employee.calculation.totalDeficitMinutes,
-          employee.calculation.bufferApplied,
-          employee.calculation.finalDeficit,
-          employee.calculation.deduction,
-          employee.calculation.finalSalary,
+          specialType,
+          employee.salary.toLocaleString("en-IN"),
+          calculationMethod,
+          isSpecialDepartment
+            ? "-"
+            : employee.calculation.absentDeduction.toLocaleString("en-IN"),
+          isSpecialDepartment
+            ? "-"
+            : employee.calculation.deficitDeduction.toLocaleString("en-IN"),
+          isSpecialDepartment
+            ? "-"
+            : employee.calculation.pipDeduction.toLocaleString("en-IN"),
+          isSpecialDepartment
+            ? "-"
+            : employee.calculation.deduction.toLocaleString("en-IN"),
+          employee.calculation.finalSalary.toLocaleString("en-IN"),
         ]);
       });
+
+      // Add grand total row
+      summaryData.push([
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "GRAND TOTAL",
+        `₹${grandTotal.toLocaleString("en-IN")}`,
+      ]);
 
       // Create summary worksheet
       const summaryWS = XLSX.utils.aoa_to_sheet(summaryData);
@@ -773,39 +1122,145 @@ export default function Home() {
 
       // Create individual sheets for each employee
       employees.forEach((employee) => {
+        const isSpecialDepartment = employee.calculation.isSpecialDepartment;
+        const isKishan = employee.calculation.isKishan;
+
         const employeeData = [
           ["Employee ID", employee.id],
           ["Name", employee.name],
           ["Department", employee.department],
-          ["Base Salary", employee.salary],
-          [""],
-          ["ATTENDANCE SUMMARY"],
-          ["Total Days", employee.calculation.totalDays],
-          ["Working Days", employee.calculation.workingDays],
-          ["Present Days", employee.calculation.presentDays],
-          ["WFH Days", employee.calculation.wfhDays],
-          ["CL Days", employee.calculation.clDays],
-          ["Holiday Days", employee.calculation.holidayDays], // Add this line
-          ["Week Off Days", employee.calculation.weekOffDays],
-          ["Absent Days", employee.calculation.absentDays],
-          [""],
-          ["SALARY CALCULATION"],
-          ["Total Deficit Minutes", employee.calculation.totalDeficitMinutes],
-          ["Buffer Applied", employee.calculation.bufferApplied],
-          ["Final Deficit", employee.calculation.finalDeficit],
-          ["Deduction Amount", employee.calculation.deduction],
-          ["Final Salary", employee.calculation.finalSalary],
-          [""],
-          ["ATTENDANCE DETAILS"],
-          [
-            "Day",
-            "Status",
-            "In Time",
-            "Out Time",
-            "Deficit (mins)",
-            "Buffer Applied",
-          ],
+          ["Base Salary", `₹${employee.salary.toLocaleString("en-IN")}`],
         ];
+
+        // Add special status indicators if applicable
+        if (isSpecialDepartment) {
+          employeeData.push([
+            "Special Department",
+            "Yes - Paid by minutes worked",
+          ]);
+        }
+        if (isKishan) {
+          employeeData.push([
+            "Special Employee",
+            "Yes - Kishan can leave after 6:00 PM",
+          ]);
+        }
+
+        employeeData.push([""]); // Empty row
+
+        employeeData.push(["ATTENDANCE SUMMARY"]);
+        employeeData.push(["Total Days", employee.calculation.totalDays]);
+        employeeData.push(["Working Days", employee.calculation.workingDays]);
+        employeeData.push(["Present Days", employee.calculation.presentDays]);
+        employeeData.push(["WFH Days", employee.calculation.wfhDays]);
+        employeeData.push(["CL Days", employee.calculation.clDays]);
+        employeeData.push(["Holiday Days", employee.calculation.holidayDays]);
+        employeeData.push(["Week Off Days", employee.calculation.weekOffDays]);
+        employeeData.push(["Absent Days", employee.calculation.absentDays]);
+
+        employeeData.push([""]); // Empty row
+
+        // Add salary calculation section based on employee type
+        employeeData.push(["SALARY CALCULATION"]);
+
+        if (isSpecialDepartment) {
+          // Special department salary calculation
+          employeeData.push([
+            "Total Minutes Worked",
+            `${employee.calculation.totalWorkedMinutes} mins`,
+          ]);
+          employeeData.push([
+            "Extra Minutes Beyond Standard",
+            `${employee.calculation.totalExtraMinutes} mins`,
+          ]);
+          employeeData.push([
+            "Standard Work Minutes (if full days)",
+            `${EXPECTED_WORK_MINUTES * employee.calculation.presentDays} mins`,
+          ]);
+          employeeData.push([
+            "Per Minute Rate",
+            `₹${employee.calculation.perMinuteRate.toFixed(2)}`,
+          ]);
+          employeeData.push([
+            "Final Salary (Based on Minutes)",
+            `₹${employee.calculation.finalSalary.toLocaleString("en-IN")}`,
+          ]);
+        } else {
+          // Regular employee salary calculation
+          employeeData.push([
+            "Per Day Salary",
+            `₹${employee.calculation.perDaySalary.toLocaleString("en-IN")}`,
+          ]);
+          employeeData.push([
+            "Per Minute Rate",
+            `₹${employee.calculation.perMinuteRate.toFixed(2)}`,
+          ]);
+
+          employeeData.push([""]); // Empty row
+
+          employeeData.push(["DEDUCTIONS"]);
+          employeeData.push([
+            "Absent Day Deduction",
+            `₹${employee.calculation.absentDeduction.toLocaleString("en-IN")}`,
+          ]);
+
+          if (isKishan) {
+            employeeData.push([
+              "Special Note",
+              "No deduction for leaving after 6:00 PM",
+            ]);
+          }
+
+          employeeData.push([
+            "Total Deficit Minutes",
+            `${employee.calculation.totalDeficitMinutes} mins`,
+          ]);
+          employeeData.push([
+            "Buffer Applied",
+            `${employee.calculation.bufferApplied} mins`,
+          ]);
+          employeeData.push([
+            "Final Deficit",
+            `${employee.calculation.finalDeficit} mins`,
+          ]);
+          employeeData.push([
+            "Late/Early Deduction",
+            `₹${employee.calculation.deficitDeduction.toLocaleString("en-IN")}`,
+          ]);
+
+          // Add PIP deduction if applicable
+          if (employee.calculation.isPIP) {
+            employeeData.push([
+              "PIP Deduction (40%)",
+              `₹${employee.calculation.pipDeduction.toLocaleString("en-IN")}`,
+            ]);
+          }
+
+          employeeData.push([
+            "Total Deduction",
+            `₹${employee.calculation.deduction.toLocaleString("en-IN")}`,
+          ]);
+
+          employeeData.push([
+            "Final Salary",
+            `₹${employee.calculation.finalSalary.toLocaleString("en-IN")}`,
+          ]);
+        }
+
+        employeeData.push(["", ""]);
+
+        employeeData.push(["ATTENDANCE DETAILS"]);
+
+        employeeData.push([
+          "Day",
+          "Status",
+          "In Time",
+          "Out Time",
+          "Late (mins)",
+          "Early (mins)",
+          "Total Deficit",
+          "Buffer Applied",
+        ]);
 
         // Add attendance data
         Object.entries(employee.attendance)
@@ -813,13 +1268,38 @@ export default function Home() {
           .forEach(([day, att]) => {
             const isBufferApplied =
               employee.calculation.daysWithBuffer.includes(day);
+            const lateMinutes = att.isLate && att.lateBy > 0 ? att.lateBy : 0;
+
+            // Handle Kishan's special case for early departures
+            let earlyMinutes = 0;
+            if (att.isEarly && att.earlyBy) {
+              if (isKishan && att.outTime) {
+                // Check if Kishan left after 6:00 PM (no deduction)
+                const outTimeParts = att.outTime.split(":").map(Number);
+                const outMinutes = outTimeParts[0] * 60 + outTimeParts[1];
+                const sixPM = 18 * 60; // 6:00 PM in minutes
+
+                if (outMinutes >= sixPM) {
+                  earlyMinutes = 0; // No deduction if after 6:00 PM
+                } else {
+                  earlyMinutes = att.earlyBy;
+                }
+              } else {
+                earlyMinutes = att.earlyBy;
+              }
+            }
+
+            const totalDeficit = lateMinutes + earlyMinutes;
+
             employeeData.push([
               att.date,
               att.status,
               att.inTime || "-",
               att.outTime || "-",
-              att.deficitMinutes > 0 ? att.deficitMinutes : 0,
-              isBufferApplied ? "Yes" : "No",
+              lateMinutes,
+              earlyMinutes,
+              isSpecialDepartment ? "-" : totalDeficit, // No deficit for special departments
+              isSpecialDepartment ? "N/A" : isBufferApplied ? "Yes" : "No",
             ]);
           });
 
@@ -842,717 +1322,6 @@ export default function Home() {
     } catch (error) {
       console.error("Error exporting all employees to Excel:", error);
       alert("Error exporting to Excel");
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
-  // Export to PDF (fixed for proper formatting)
-  const exportToPDF = () => {
-    if (!selectedEmployee) return;
-
-    setExportLoading(true);
-
-    try {
-      // Create a new PDF document with proper dimensions
-      const doc = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-        compress: true,
-      });
-
-      // Add company logo/header
-      // Instead of an image, we'll create a styled header
-      doc.setFillColor(41, 98, 255); // Blue header background
-      doc.rect(0, 0, 210, 25, "F");
-
-      doc.setTextColor(255, 255, 255);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(18);
-      doc.text("SALARY REPORT", 105, 15, { align: "center" });
-
-      // Add subtitle with period
-      if (month && year) {
-        doc.setFontSize(12);
-        doc.text(`${month} ${year}`, 105, 22, { align: "center" });
-      }
-
-      // Reset text color to black for the rest of the document
-      doc.setTextColor(0, 0, 0);
-
-      // Add employee info in a styled box
-      doc.setFillColor(240, 240, 240);
-      doc.rect(10, 30, 190, 25, "F");
-
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text("Employee Information", 15, 38);
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Name: ${selectedEmployee.name}`, 15, 45);
-      doc.text(`Department: ${selectedEmployee.department}`, 105, 45);
-      doc.text(`Employee ID: ${selectedEmployee.id}`, 15, 52);
-      doc.text(
-        `Base Salary: ₹${selectedEmployee.salary.toLocaleString()}`,
-        105,
-        52
-      );
-
-      // Add summary section with colored boxes
-      const startY = 65;
-
-      // Present days (green box)
-      doc.setFillColor(200, 250, 200);
-      doc.rect(10, startY, 45, 25, "F");
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Present", 32.5, startY + 8, { align: "center" });
-      doc.setFontSize(16);
-      doc.text(
-        selectedEmployee.calculation.presentDays.toString(),
-        32.5,
-        startY + 18,
-        { align: "center" }
-      );
-
-      // WFH days (blue box)
-      doc.setFillColor(200, 200, 250);
-      doc.rect(58, startY, 45, 25, "F");
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("WFH", 80.5, startY + 8, { align: "center" });
-      doc.setFontSize(16);
-      doc.text(
-        selectedEmployee.calculation.wfhDays.toString(),
-        80.5,
-        startY + 18,
-        { align: "center" }
-      );
-
-      doc.setFillColor(220, 220, 220);
-      doc.rect(106, startY, 45, 25, "F");
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Week Off", 128.5, startY + 8, { align: "center" });
-      doc.setFontSize(16);
-      doc.text(
-        selectedEmployee.calculation.weekOffDays.toString(),
-        128.5,
-        startY + 18,
-        { align: "center" }
-      );
-
-      // Holiday days (indigo box) - Add this section
-      doc.setFillColor(200, 190, 240); // Light indigo color
-      doc.rect(154, startY, 45, 25, "F");
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Holidays", 176.5, startY + 8, { align: "center" });
-      doc.setFontSize(16);
-      doc.text(
-        selectedEmployee.calculation.holidayDays.toString(),
-        176.5,
-        startY + 18,
-        { align: "center" }
-      );
-
-      // Absent days (red box) - Move this down
-      doc.setFillColor(250, 200, 200);
-      doc.rect(10, startY + 30, 45, 25, "F"); // Adjust Y position
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text("Absent", 32.5, startY + 38, { align: "center" }); // Adjust Y position
-      doc.setFontSize(16);
-      doc.text(
-        selectedEmployee.calculation.absentDays.toString(),
-        32.5,
-        startY + 48, // Adjust Y position
-        { align: "center" }
-      );
-
-      // Add salary calculation section
-      doc.setFillColor(230, 240, 255);
-      doc.rect(10, startY + 35, 190, 60, "F");
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.text("Salary Calculation", 15, startY + 45);
-
-      // Calculation details
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-
-      const calcStartY = startY + 55;
-      const lineHeight = 7;
-
-      doc.text(
-        `Total Deficit Minutes: ${selectedEmployee.calculation.totalDeficitMinutes}`,
-        15,
-        calcStartY
-      );
-      doc.text(
-        `Buffer Applied: ${selectedEmployee.calculation.bufferApplied}`,
-        15,
-        calcStartY + lineHeight
-      );
-      doc.text(
-        `Final Deficit: ${selectedEmployee.calculation.finalDeficit}`,
-        15,
-        calcStartY + lineHeight * 2
-      );
-      doc.text(
-        `Per Minute Rate: ₹${selectedEmployee.calculation.perMinuteRate.toFixed(
-          2
-        )}`,
-        15,
-        calcStartY + lineHeight * 3
-      );
-
-      doc.text(
-        `Deduction: ₹${selectedEmployee.calculation.deduction.toLocaleString()}`,
-        120,
-        calcStartY
-      );
-
-      // Highlight final salary
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.text(
-        `Final Salary: ₹${selectedEmployee.calculation.finalSalary.toLocaleString()}`,
-        120,
-        calcStartY + lineHeight * 3
-      );
-
-      // Add attendance details table
-      const tableStartY = startY + 105;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("Attendance Details", 15, tableStartY);
-
-      // Define table columns
-      const col1X = 15; // Day
-      const col2X = 35; // Status
-      const col3X = 70; // In Time
-      const col4X = 100; // Out Time
-      const col5X = 130; // Deficit
-      const col6X = 165; // Buffer
-
-      // Create table header
-      doc.setFillColor(41, 98, 255);
-      doc.rect(10, tableStartY + 5, 190, 8, "F");
-
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(9);
-      doc.text("Day", col1X, tableStartY + 10);
-      doc.text("Status", col2X, tableStartY + 10);
-      doc.text("In Time", col3X, tableStartY + 10);
-      doc.text("Out Time", col4X, tableStartY + 10);
-      doc.text("Deficit (mins)", col5X, tableStartY + 10);
-      doc.text("Buffer", col6X, tableStartY + 10);
-
-      // Reset text color to black for the table data
-      doc.setTextColor(0, 0, 0);
-      doc.setFont("helvetica", "normal");
-
-      // Add attendance data (up to 20 rows per page)
-      const rows = Object.entries(selectedEmployee.attendance).sort(
-        ([a], [b]) => parseInt(a) - parseInt(b)
-      );
-
-      let currentPage = 1;
-      const rowsPerPage = 20;
-      const rowHeight = 7;
-
-      for (let i = 0; i < rows.length; i++) {
-        // Check if we need a new page
-        if (i > 0 && i % rowsPerPage === 0) {
-          doc.addPage();
-          currentPage++;
-
-          // Add header to new page
-          doc.setFillColor(41, 98, 255);
-          doc.rect(10, 15, 190, 8, "F");
-
-          doc.setTextColor(255, 255, 255);
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "bold");
-          doc.text("Day", col1X, 20);
-          doc.text("Status", col2X, 20);
-          doc.text("In Time", col3X, 20);
-          doc.text("Out Time", col4X, 20);
-          doc.text("Deficit (mins)", col5X, 20);
-          doc.text("Buffer", col6X, 20);
-
-          doc.setTextColor(0, 0, 0);
-          doc.setFont("helvetica", "normal");
-        }
-
-        const [day, att] = rows[i];
-        const isBufferApplied =
-          selectedEmployee.calculation.daysWithBuffer.includes(day);
-
-        const yPos =
-          currentPage === 1
-            ? tableStartY + 15 + (i % rowsPerPage) * rowHeight
-            : 25 + (i % rowsPerPage) * rowHeight;
-
-        // Alternate row background
-        if (i % 2 === 1) {
-          doc.setFillColor(240, 240, 240);
-          doc.rect(10, yPos - 5, 190, rowHeight, "F");
-        }
-
-        // Use different background color based on status
-        if (att.status === "Absent") {
-          doc.setFillColor(250, 220, 220);
-          doc.rect(col2X - 5, yPos - 5, 30, rowHeight, "F");
-        } else if (att.status === "WFH") {
-          doc.setFillColor(220, 240, 250);
-          doc.rect(col2X - 5, yPos - 5, 30, rowHeight, "F");
-        } else if (att.status === "Week Off") {
-          doc.setFillColor(230, 230, 230);
-          doc.rect(col2X - 5, yPos - 5, 30, rowHeight, "F");
-        } else if (att.status === "CL") {
-          doc.setFillColor(250, 250, 200);
-          doc.rect(col2X - 5, yPos - 5, 30, rowHeight, "F");
-        }
-
-        doc.text(att.date, col1X, yPos);
-        doc.text(att.status, col2X, yPos);
-        doc.text(att.inTime || "-", col3X, yPos);
-        doc.text(att.outTime || "-", col4X, yPos);
-        doc.text(
-          att.deficitMinutes > 0 ? att.deficitMinutes.toString() : "-",
-          col5X,
-          yPos
-        );
-        doc.text(isBufferApplied ? "Yes" : "-", col6X, yPos);
-      }
-
-      // Add footer
-      const pageCount = Math.ceil(rows.length / rowsPerPage);
-
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-
-        // Add footer with date and page number
-        doc.setFillColor(240, 240, 240);
-        doc.rect(0, 282, 210, 15, "F");
-
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        const today = new Date();
-        doc.text(
-          `Generated on: ${today.toLocaleDateString()} ${today.toLocaleTimeString()}`,
-          15,
-          290
-        );
-        doc.text(`Page ${i} of ${pageCount}`, 195, 290, { align: "right" });
-      }
-
-      // Save the PDF
-      const periodText = month && year ? `${month}_${year}_` : "";
-      const fileName = `${selectedEmployee.name}_Salary_${periodText}${
-        new Date().toISOString().split("T")[0]
-      }.pdf`;
-      doc.save(fileName);
-    } catch (error) {
-      console.error("Error exporting to PDF:", error);
-      alert(
-        "Error exporting to PDF. Please make sure jsPDF is properly loaded."
-      );
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
-  // Export all employees to PDF
-  const exportAllToPDF = () => {
-    if (employees.length === 0) return;
-
-    setExportLoading(true);
-
-    try {
-      // Create a new PDF document
-      const doc = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-        compress: true,
-      });
-
-      // Add company header
-      doc.setFillColor(41, 98, 255);
-      doc.rect(0, 0, 210, 25, "F");
-
-      doc.setTextColor(255, 255, 255);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(18);
-      doc.text("SALARY SUMMARY REPORT", 105, 15, { align: "center" });
-
-      // Add subtitle with period
-      if (month && year) {
-        doc.setFontSize(12);
-        doc.text(`${month} ${year}`, 105, 22, { align: "center" });
-      }
-
-      // Reset text color to black for the rest of the document
-      doc.setTextColor(0, 0, 0);
-
-      // Add summary information
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Total Employees: ${employees.length}`, 15, 35);
-      doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 150, 35, {
-        align: "right",
-      });
-
-      // Create summary table for all employees
-      const startY = 45;
-
-      // Table headers
-      const headers = [
-        "ID",
-        "Name",
-        "Department",
-        "Base Salary",
-        "Final Salary",
-        "Deduction",
-      ];
-
-      // Column positions
-      const colWidths = [10, 50, 40, 30, 30, 25];
-      let colPositions = [15];
-
-      for (let i = 0; i < colWidths.length - 1; i++) {
-        colPositions.push(colPositions[i] + colWidths[i]);
-      }
-
-      // Draw header
-      doc.setFillColor(41, 98, 255);
-      doc.rect(10, startY, 190, 8, "F");
-
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "bold");
-
-      headers.forEach((header, i) => {
-        doc.text(header, colPositions[i], startY + 5.5);
-      });
-
-      // Reset text color to black for table data
-      doc.setTextColor(0, 0, 0);
-      doc.setFont("helvetica", "normal");
-
-      // Add employee data
-      let yPosition = startY + 15;
-      const rowHeight = 8;
-      let currentPage = 1;
-      const maxRowsPerPage = 30;
-
-      employees.forEach((employee, index) => {
-        // Check if we need a new page
-        if (index > 0 && index % maxRowsPerPage === 0) {
-          doc.addPage();
-          currentPage++;
-
-          // Add header to new page
-          doc.setFillColor(41, 98, 255);
-          doc.rect(10, 15, 190, 8, "F");
-
-          doc.setTextColor(255, 255, 255);
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "bold");
-
-          headers.forEach((header, i) => {
-            doc.text(header, colPositions[i], 20.5);
-          });
-
-          doc.setTextColor(0, 0, 0);
-          doc.setFont("helvetica", "normal");
-
-          yPosition = 30;
-        }
-
-        // Alternate row background
-        if (index % 2 === 1) {
-          doc.setFillColor(240, 240, 240);
-          doc.rect(10, yPosition - 5, 190, rowHeight, "F");
-        }
-
-        // Employee data
-        doc.text(employee.id.toString(), colPositions[0], yPosition);
-
-        // Truncate name if too long
-        const displayName =
-          employee.name.length > 25
-            ? employee.name.substring(0, 22) + "..."
-            : employee.name;
-        doc.text(displayName, colPositions[1], yPosition);
-
-        // Truncate department if too long
-        const displayDept =
-          employee.department.length > 20
-            ? employee.department.substring(0, 17) + "..."
-            : employee.department;
-        doc.text(displayDept, colPositions[2], yPosition);
-
-        // Salary information
-        doc.text(
-          `₹${employee.salary.toLocaleString()}`,
-          colPositions[3],
-          yPosition
-        );
-        doc.text(
-          `₹${employee.calculation.finalSalary.toLocaleString()}`,
-          colPositions[4],
-          yPosition
-        );
-        doc.text(
-          `₹${employee.calculation.deduction.toLocaleString()}`,
-          colPositions[5],
-          yPosition
-        );
-
-        yPosition += rowHeight;
-      });
-
-      // Add individual employee pages
-      employees.forEach((employee) => {
-        doc.addPage();
-
-        // Add employee header
-        doc.setFillColor(41, 98, 255);
-        doc.rect(0, 0, 210, 25, "F");
-
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(16);
-        doc.text(employee.name, 105, 12, { align: "center" });
-        doc.setFontSize(12);
-        doc.text(
-          `Salary Report ${month ? `- ${month} ${year}` : ""}`,
-          105,
-          20,
-          { align: "center" }
-        );
-
-        // Reset text color to black
-        doc.setTextColor(0, 0, 0);
-
-        // Employee info box
-        doc.setFillColor(240, 240, 240);
-        doc.rect(10, 30, 190, 20, "F");
-
-        doc.setFontSize(10);
-        doc.text(`ID: ${employee.id}`, 15, 38);
-        doc.text(`Department: ${employee.department}`, 15, 45);
-        doc.text(`Base Salary: ₹${employee.salary.toLocaleString()}`, 120, 38);
-        doc.text(
-          `Final Salary: ₹${employee.calculation.finalSalary.toLocaleString()}`,
-          120,
-          45
-        );
-
-        // Attendance summary in colored boxes
-        const boxStartY = 55;
-        const boxHeight = 25;
-        const boxWidth = 45;
-        const boxSpacing = 3;
-
-        // Present
-        doc.setFillColor(200, 250, 200);
-        doc.rect(10, boxStartY, boxWidth, boxHeight, "F");
-        doc.setFont("helvetica", "bold");
-        doc.text("Present", 32.5, boxStartY + 8, { align: "center" });
-        doc.setFontSize(16);
-        doc.text(
-          employee.calculation.presentDays.toString(),
-          32.5,
-          boxStartY + 18,
-          { align: "center" }
-        );
-
-        // WFH
-        doc.setFillColor(200, 220, 250);
-        doc.rect(
-          10 + boxWidth + boxSpacing,
-          boxStartY,
-          boxWidth,
-          boxHeight,
-          "F"
-        );
-        doc.setFontSize(10);
-        doc.text("WFH", 32.5 + boxWidth + boxSpacing, boxStartY + 8, {
-          align: "center",
-        });
-        doc.setFontSize(16);
-        doc.text(
-          employee.calculation.wfhDays.toString(),
-          32.5 + boxWidth + boxSpacing,
-          boxStartY + 18,
-          { align: "center" }
-        );
-
-        // Week Off
-        doc.setFillColor(220, 220, 220);
-        doc.rect(
-          10 + (boxWidth + boxSpacing) * 2,
-          boxStartY,
-          boxWidth,
-          boxHeight,
-          "F"
-        );
-        doc.setFontSize(10);
-        doc.text(
-          "Week Off",
-          32.5 + (boxWidth + boxSpacing) * 2,
-          boxStartY + 8,
-          { align: "center" }
-        );
-        doc.setFontSize(16);
-        doc.text(
-          employee.calculation.weekOffDays.toString(),
-          32.5 + (boxWidth + boxSpacing) * 2,
-          boxStartY + 18,
-          { align: "center" }
-        );
-
-        // Absent
-        doc.setFillColor(250, 200, 200);
-        doc.rect(
-          10 + (boxWidth + boxSpacing) * 3,
-          boxStartY,
-          boxWidth,
-          boxHeight,
-          "F"
-        );
-        doc.setFontSize(10);
-        doc.text("Absent", 32.5 + (boxWidth + boxSpacing) * 3, boxStartY + 8, {
-          align: "center",
-        });
-        doc.setFontSize(16);
-        doc.text(
-          employee.calculation.absentDays.toString(),
-          32.5 + (boxWidth + boxSpacing) * 3,
-          boxStartY + 18,
-          { align: "center" }
-        );
-
-        // Calculation info
-        doc.setFillColor(230, 240, 255);
-        doc.rect(10, boxStartY + boxHeight + 10, 190, 40, "F");
-
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Salary Calculation", 15, boxStartY + boxHeight + 20);
-
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        doc.text(
-          `Total Deficit: ${employee.calculation.totalDeficitMinutes} mins`,
-          15,
-          boxStartY + boxHeight + 30
-        );
-        doc.text(
-          `Buffer Applied: ${employee.calculation.bufferApplied} mins`,
-          15,
-          boxStartY + boxHeight + 38
-        );
-        doc.text(
-          `Final Deficit: ${employee.calculation.finalDeficit} mins`,
-          15,
-          boxStartY + boxHeight + 46
-        );
-
-        doc.text(
-          `Per Minute Rate: ₹${employee.calculation.perMinuteRate.toFixed(2)}`,
-          120,
-          boxStartY + boxHeight + 30
-        );
-        doc.text(
-          `Deduction: ₹${employee.calculation.deduction.toLocaleString()}`,
-          120,
-          boxStartY + boxHeight + 38
-        );
-        doc.setFont("helvetica", "bold");
-        doc.text(
-          `Final Salary: ₹${employee.calculation.finalSalary.toLocaleString()}`,
-          120,
-          boxStartY + boxHeight + 46
-        );
-
-        // Simple attendance table (just showing counts)
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.text("Attendance Summary", 15, boxStartY + boxHeight + 65);
-
-        doc.setFillColor(240, 240, 240);
-        doc.rect(10, boxStartY + boxHeight + 70, 190, 30, "F");
-
-        doc.setFont("helvetica", "normal");
-        doc.text(
-          `Working Days: ${employee.calculation.workingDays}`,
-          15,
-          boxStartY + boxHeight + 80
-        );
-        doc.text(
-          `Present: ${employee.calculation.presentDays}`,
-          15,
-          boxStartY + boxHeight + 90
-        );
-        doc.text(
-          `Work From Home: ${employee.calculation.wfhDays}`,
-          80,
-          boxStartY + boxHeight + 80
-        );
-        doc.text(
-          `Casual Leave: ${employee.calculation.clDays}`,
-          80,
-          boxStartY + boxHeight + 90
-        );
-        doc.text(
-          `Holidays: ${employee.calculation.holidayDays}`, // Add this line
-          80,
-          boxStartY + boxHeight + 100
-        );
-        doc.text(
-          `Week Off: ${employee.calculation.weekOffDays}`,
-          145,
-          boxStartY + boxHeight + 80
-        );
-        doc.text(
-          `Absent: ${employee.calculation.absentDays}`,
-          145,
-          boxStartY + boxHeight + 90
-        );
-
-        // Footer
-        doc.setFillColor(230, 230, 230);
-        doc.rect(0, 275, 210, 22, "F");
-
-        doc.setFontSize(8);
-        doc.setTextColor(80, 80, 80);
-        doc.text(
-          `Generated on: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
-          15,
-          285
-        );
-        doc.text("Advanced Salary Calculator", 105, 285, { align: "center" });
-        doc.text("CONFIDENTIAL", 195, 285, { align: "right" });
-      });
-
-      // Save the PDF
-      const periodText = month && year ? `${month}_${year}_` : "";
-      const fileName = `All_Employees_Salary_${periodText}${
-        new Date().toISOString().split("T")[0]
-      }.pdf`;
-      doc.save(fileName);
-    } catch (error) {
-      console.error("Error exporting all employees to PDF:", error);
-      alert("Error exporting to PDF");
     } finally {
       setExportLoading(false);
     }
@@ -1613,14 +1382,6 @@ export default function Home() {
                       <FileSpreadsheet className="mr-1 w-4 h-4" />
                       Export Current
                     </button>
-                    <button
-                      onClick={exportToPDF}
-                      disabled={exportLoading}
-                      className="flex items-center px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 shadow-sm transition-all cursor-pointer"
-                    >
-                      <File className="mr-1 w-4 h-4" />
-                      Export PDF
-                    </button>
                   </>
                 )}
                 <button
@@ -1631,19 +1392,29 @@ export default function Home() {
                   <FilePlus className="mr-1 w-4 h-4" />
                   Export All Excel
                 </button>
-                <button
-                  onClick={exportAllToPDF}
-                  disabled={exportLoading}
-                  className="flex items-center px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 shadow-sm transition-all cursor-pointer"
-                >
-                  <Users className="mr-1 w-4 h-4" />
-                  Export All PDF
-                </button>
+                {/* Removed PDF export buttons */}
+
+                {/* Add total salary display */}
+                {employees.length > 0 && (
+                  <div className="ml-2 px-3 py-2 bg-gray-100 rounded-lg flex items-center">
+                    <span className="font-medium text-gray-700">
+                      Total Payroll:{" "}
+                    </span>
+                    <span className="ml-1 font-bold text-green-700">
+                      ₹
+                      {employees
+                        .reduce(
+                          (total, emp) => total + emp.calculation.finalSalary,
+                          0
+                        )
+                        .toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
-
         {/* Instructions panel */}
         {!employees.length && (
           <div className="mb-8 bg-purple-50 border border-purple-200 p-6 rounded-lg">
@@ -1669,7 +1440,6 @@ export default function Home() {
             </ul>
           </div>
         )}
-
         <div className="flex flex-col md:flex-row gap-4">
           {/* Employee list sidebar */}
 
@@ -1729,10 +1499,16 @@ export default function Home() {
 
           {/* Employee details */}
           {selectedEmployee && (
+            // Updated employee details section with PIP indicator
             <div className="md:w-2/3 lg:w-3/4 bg-white rounded-lg shadow-md p-4">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold mb-2">
+                <h2 className="text-xl font-semibold mb-2 flex items-center">
                   {selectedEmployee.name}
+                  {selectedEmployee.calculation.isPIP && (
+                    <span className="ml-3 px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">
+                      Performance Improvement Plan
+                    </span>
+                  )}
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-gray-50 p-3 rounded-md">
@@ -1744,73 +1520,47 @@ export default function Home() {
                   <div className="bg-gray-50 p-3 rounded-md">
                     <div className="text-sm text-gray-700">Base Salary</div>
                     <div className="font-medium text-gray-900">
-                      ₹{selectedEmployee.salary.toLocaleString()}
+                      ₹{selectedEmployee.salary.toLocaleString("en-IN")}
                     </div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded-md">
                     <div className="text-sm text-gray-700">Final Salary</div>
                     <div className="font-medium text-green-700">
                       ₹
-                      {selectedEmployee.calculation.finalSalary.toLocaleString()}
+                      {selectedEmployee.calculation.finalSalary.toLocaleString(
+                        "en-IN"
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Attendance Summary */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3 flex items-center">
-                  <Calendar className="mr-2 text-purple-600 w-5 h-5" />
-                  Attendance Summary
-                </h3>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                  <div className="bg-blue-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">Total Days</div>
-                    <div className="font-medium text-gray-900 text-lg">
-                      {selectedEmployee.calculation.totalDays}
-                    </div>
-                  </div>
-                  <div className="bg-blue-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">Working Days</div>
-                    <div className="font-medium text-gray-900 text-lg">
-                      {selectedEmployee.calculation.workingDays}
-                    </div>
-                  </div>
-                  <div className="bg-green-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">Present</div>
-                    <div className="font-medium text-green-700 text-lg">
-                      {selectedEmployee.calculation.presentDays}
-                    </div>
-                  </div>
-                  <div className="bg-blue-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">WFH</div>
-                    <div className="font-medium text-purple-700 text-lg">
-                      {selectedEmployee.calculation.wfhDays}
-                    </div>
-                  </div>
-                  <div className="bg-yellow-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">CL</div>
-                    <div className="font-medium text-yellow-600 text-lg">
-                      {selectedEmployee.calculation.clDays}
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">Week Off</div>
-                    <div className="font-medium text-gray-600 text-lg">
-                      {selectedEmployee.calculation.weekOffDays}
-                    </div>
-                  </div>
-                  <div className="bg-red-50 p-3 rounded-md text-center">
-                    <div className="text-sm text-gray-700">Absent</div>
-                    <div className="font-medium text-red-700 text-lg">
-                      {selectedEmployee.calculation.absentDays}
-                    </div>
-                  </div>
+              {/* Special Department or Employee Indicator */}
+              {(selectedEmployee.calculation.isSpecialDepartment ||
+                selectedEmployee.calculation.isKishan) && (
+                <div className="mb-4 bg-indigo-50 p-3 rounded-lg border border-indigo-200">
+                  {selectedEmployee.calculation.isSpecialDepartment && (
+                    <p className="text-sm text-indigo-800 font-medium">
+                      <span className="inline-block bg-indigo-100 px-2 py-1 rounded mr-2">
+                        Special Department
+                      </span>
+                      This employee is paid based on actual minutes worked,
+                      including time before 10:00 AM and after 6:30 PM.
+                    </p>
+                  )}
+                  {selectedEmployee.calculation.isKishan && (
+                    <p className="text-sm text-indigo-800 font-medium">
+                      <span className="inline-block bg-indigo-100 px-2 py-1 rounded mr-2">
+                        Special Employee
+                      </span>
+                      Kishan can leave early after 6:00 PM without salary
+                      deduction.
+                    </p>
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Salary Calculation Summary */}
+              {/* Conditional Salary Calculation Panel based on department type */}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold mb-3 flex items-center">
                   <Calculator className="mr-2 text-purple-600 w-5 h-5" />
@@ -1818,70 +1568,196 @@ export default function Home() {
                 </h3>
 
                 <div className="bg-blue-50 p-4 rounded-lg">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div>
-                      <div className="text-sm text-gray-700">Base Salary</div>
-                      <div className="font-medium text-gray-900">
-                        ₹{selectedEmployee.salary.toLocaleString()}
+                  {selectedEmployee.calculation.isSpecialDepartment ? (
+                    /* Special Department Salary Calculation */
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Total Minutes Worked
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          {selectedEmployee.calculation.totalWorkedMinutes} mins
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Per Minute Rate
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          ₹
+                          {selectedEmployee.calculation.perMinuteRate.toFixed(
+                            2
+                          )}
+                          /min
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Base Salary (Full Month)
+                        </div>
+                        <div className="font-medium text-gray-700">
+                          ₹{selectedEmployee.salary.toLocaleString("en-IN")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Extra Minutes Beyond Standard
+                        </div>
+                        <div className="font-medium text-green-700">
+                          {selectedEmployee.calculation.totalExtraMinutes} mins
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Expected Work Minutes (Standard)
+                        </div>
+                        <div className="font-medium text-gray-700">
+                          {EXPECTED_WORK_MINUTES *
+                            selectedEmployee.calculation.presentDays}{" "}
+                          mins
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Final Salary (Based on Minutes)
+                        </div>
+                        <div className="font-medium text-green-700">
+                          ₹
+                          {selectedEmployee.calculation.finalSalary.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="text-sm text-gray-700">Total Deficit</div>
-                      <div className="font-medium text-gray-900">
-                        {selectedEmployee.calculation.totalDeficitMinutes}{" "}
-                        minutes
+                  ) : (
+                    /* Regular Employee Salary Calculation */
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div>
+                        <div className="text-sm text-gray-700">Base Salary</div>
+                        <div className="font-medium text-gray-900">
+                          ₹{selectedEmployee.salary.toLocaleString("en-IN")}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Per Day Rate
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          ₹
+                          {selectedEmployee.calculation.perDaySalary.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Per Minute Rate
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          ₹
+                          {selectedEmployee.calculation.perMinuteRate.toFixed(
+                            2
+                          )}
+                          /min
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">Absent Days</div>
+                        <div className="font-medium text-gray-900">
+                          {selectedEmployee.calculation.absentDays} days
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Absent Deduction
+                        </div>
+                        <div className="font-medium text-red-700">
+                          ₹
+                          {selectedEmployee.calculation.absentDeduction.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Late Minutes
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          {selectedEmployee.calculation.totalDeficitMinutes}{" "}
+                          mins
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Buffer Applied
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          {selectedEmployee.calculation.bufferApplied} mins
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Final Deficit
+                        </div>
+                        <div className="font-medium text-gray-900">
+                          {selectedEmployee.calculation.finalDeficit} mins
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Late/Early Deduction
+                        </div>
+                        <div className="font-medium text-red-700">
+                          ₹
+                          {selectedEmployee.calculation.deficitDeduction.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+                      </div>
+
+                      {selectedEmployee.calculation.isPIP && (
+                        <div>
+                          <div className="text-sm text-gray-700">
+                            PIP Deduction (40%)
+                          </div>
+                          <div className="font-medium text-red-700">
+                            ₹
+                            {selectedEmployee.calculation.pipDeduction.toLocaleString(
+                              "en-IN"
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Total Deduction
+                        </div>
+                        <div className="font-medium text-red-700">
+                          ₹
+                          {selectedEmployee.calculation.deduction.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm text-gray-700">
+                          Final Salary
+                        </div>
+                        <div className="font-medium text-green-700">
+                          ₹
+                          {selectedEmployee.calculation.finalSalary.toLocaleString(
+                            "en-IN"
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="text-sm text-gray-700">
-                        Buffer Applied
-                      </div>
-                      <div className="font-medium text-gray-900">
-                        {selectedEmployee.calculation.bufferApplied} minutes
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-700">Final Deficit</div>
-                      <div className="font-medium text-gray-900">
-                        {selectedEmployee.calculation.finalDeficit} minutes
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-700">Deficit Rate</div>
-                      <div className="font-medium text-gray-900">
-                        ₹{selectedEmployee.calculation.perMinuteRate.toFixed(2)}{" "}
-                        per min
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-700">
-                        Deduction Amount
-                      </div>
-                      <div className="font-medium text-red-700">
-                        ₹
-                        {selectedEmployee.calculation.deduction.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-700">Final Salary</div>
-                      <div className="font-medium text-green-700">
-                        ₹
-                        {selectedEmployee.calculation.finalSalary.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-700">
-                        Buffer Days Used
-                      </div>
-                      <div className="font-medium text-gray-900">
-                        {selectedEmployee.calculation.daysWithBuffer.length} of{" "}
-                        {MAX_BUFFER_DAYS}
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
-
               <div ref={tableRef}>
                 <h3 className="text-lg font-semibold mb-3 flex items-center">
                   <Calendar className="mr-2 text-purple-600 w-5 h-5" />
@@ -1890,10 +1766,11 @@ export default function Home() {
 
                 <div className="bg-yellow-50 p-3 mb-4 rounded-lg border border-yellow-200">
                   <p className="text-sm text-yellow-800">
-                    <strong>Automated Buffer Application:</strong> Buffer is
-                    automatically applied to up to {MAX_BUFFER_DAYS} days with
-                    the lowest deficit minutes. This optimizes your salary by
-                    minimizing deductions.
+                    <strong>Automated Buffer Application:</strong> Buffer (up to
+                    15 mins) is automatically applied to up to {MAX_BUFFER_DAYS}{" "}
+                    days with the lowest late minutes. Both late arrivals and
+                    early departures count as deficit minutes, but buffer is
+                    only applied to late arrivals.
                   </p>
                 </div>
 
@@ -1914,7 +1791,10 @@ export default function Home() {
                           Out Time
                         </th>
                         <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
-                          Deficit
+                          Late By
+                        </th>
+                        <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
+                          Early By
                         </th>
                         <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
                           Buffer Status
@@ -1969,7 +1849,7 @@ export default function Home() {
                                 {att.inTime || "-"}
                                 {att.isLate && att.lateBy && (
                                   <span className="ml-2 text-xs text-red-600">
-                                    (+{att.lateBy} min late)
+                                    (+{att.lateBy} mins late)
                                   </span>
                                 )}
                               </td>
@@ -1977,18 +1857,24 @@ export default function Home() {
                                 {att.outTime || "-"}
                                 {att.isEarly && att.earlyBy && (
                                   <span className="ml-2 text-xs text-red-600">
-                                    (-{att.earlyBy} min early)
+                                    (-{att.earlyBy} mins early)
                                   </span>
                                 )}
                               </td>
                               <td className="py-2 px-3 text-sm text-gray-900">
-                                {att.deficitMinutes > 0
-                                  ? `${att.deficitMinutes} mins`
+                                {att.isLate && att.lateBy > 0
+                                  ? `${att.lateBy} mins`
+                                  : "-"}
+                              </td>
+                              <td className="py-2 px-3 text-sm text-gray-900">
+                                {att.isEarly && att.earlyBy > 0
+                                  ? `${att.earlyBy} mins`
                                   : "-"}
                               </td>
                               <td className="py-2 px-3 text-sm">
                                 {att.status === "Present" &&
-                                att.deficitMinutes > 0 ? (
+                                att.isLate &&
+                                att.lateBy > 0 ? (
                                   <span
                                     className={`px-2 py-1 rounded-full text-xs ${
                                       isBufferApplied
@@ -1998,7 +1884,7 @@ export default function Home() {
                                   >
                                     {isBufferApplied
                                       ? `Buffer Applied (${Math.min(
-                                          att.deficitMinutes,
+                                          att.lateBy,
                                           BUFFER_MINUTES
                                         )} mins)`
                                       : "No Buffer"}
