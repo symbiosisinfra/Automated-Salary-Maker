@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import {
   Calendar,
@@ -12,8 +12,6 @@ import {
   Users,
   FilePlus,
 } from "lucide-react";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
 
 // Types
 interface Employee {
@@ -79,11 +77,6 @@ const OFFICE_START_HOUR = 10; // Office starts at 10:00 AM
 const OFFICE_END_HOUR = 18; // Office ends at 18:30 (6:30 PM)
 const OFFICE_END_MINUTE = 30;
 
-declare global {
-  interface Window {
-    jsPDF: any;
-  }
-}
 
 export default function Home() {
   const [employees, setEmployees] = useState<Employee[]>([]);
