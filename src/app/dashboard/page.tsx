@@ -663,7 +663,7 @@ export default function Dashboard() {
           </table>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between">
+        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between ">
           <span className="text-sm text-gray-600">
             Showing {recentApplications.length} of {metrics.totalApplications}{" "}
             applications

@@ -212,6 +212,9 @@ export function generateId(prefix = ""): string {
   return `${prefix}${Math.random().toString(36).substring(2, 11)}`;
 }
 
+/**
+ * Handle API errors consistently
+ */
 export function handleApiError(error: unknown, customMessage = "Server error") {
   console.error(`API Error: ${customMessage}:`, error);
 
@@ -219,4 +222,73 @@ export function handleApiError(error: unknown, customMessage = "Server error") {
   const errorMessage = error instanceof Error ? error.message : customMessage;
 
   return NextResponse.json({ error: errorMessage }, { status: 500 });
+}
+
+/**
+ * Extract numeric price value from string (e.g., "2.5 Cr" -> 2.5)
+ */
+export function extractPriceValue(priceString: string): number | null {
+  if (!priceString) return null;
+
+  // Extract numeric part
+  const matches = priceString.match(/(\d+(\.\d+)?)/);
+  if (!matches || !matches[1]) return null;
+
+  const numericValue = parseFloat(matches[1]);
+
+  // Determine multiplier based on unit
+  if (
+    priceString.toLowerCase().includes("cr") ||
+    priceString.toLowerCase().includes("crore")
+  ) {
+    return numericValue; // Already in crores
+  } else if (
+    priceString.toLowerCase().includes("lac") ||
+    priceString.toLowerCase().includes("lakh") ||
+    priceString.toLowerCase().includes("l")
+  ) {
+    return numericValue / 100; // Convert to crores
+  }
+
+  return numericValue;
+}
+
+/**
+ * Format price string to a standardized format
+ */
+export function formatPriceString(price: number | string): string {
+  if (typeof price === "string") {
+    const numericValue = extractPriceValue(price);
+    if (numericValue === null) return price;
+    price = numericValue;
+  }
+
+  if (price >= 1) {
+    return `${price} Cr`;
+  } else {
+    return `${(price * 100).toFixed(0)} Lac`;
+  }
+}
+
+/**
+ * Get color class for project construction status
+ */
+export function getProjectStatusColor(status: string): string {
+  if (!status) return "bg-gray-100 text-gray-800";
+
+  const statusLower = status.toLowerCase();
+
+  if (statusLower.includes("ready") || statusLower.includes("completed")) {
+    return "bg-green-100 text-green-800";
+  }
+
+  if (statusLower.includes("under construction")) {
+    return "bg-amber-100 text-amber-800";
+  }
+
+  if (statusLower.includes("upcoming") || statusLower.includes("launch")) {
+    return "bg-blue-100 text-blue-800";
+  }
+
+  return "bg-gray-100 text-gray-800";
 }
