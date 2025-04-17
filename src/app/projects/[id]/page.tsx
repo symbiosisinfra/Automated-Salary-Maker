@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import {
   Building,
@@ -47,6 +47,9 @@ export default function ProjectDetailPage({
 }: {
   params: { id: string };
 }) {
+  // Unwrap params using React.use()
+  const id = params.id;
+
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +61,7 @@ export default function ProjectDetailPage({
         setIsLoading(true);
 
         // Fetch specific project by ID
-        const response = await fetch(`/api/projects?id=${params.id}`);
+        const response = await fetch(`/api/projects?id=${id}`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch project: ${response.statusText}`);
@@ -74,10 +77,10 @@ export default function ProjectDetailPage({
       }
     };
 
-    if (params.id) {
+    if (id) {
       fetchProjectData();
     }
-  }, [params.id]);
+  }, [id]);
 
   // Get status color
   const getStatusColor = (status: string) => {
@@ -201,25 +204,25 @@ export default function ProjectDetailPage({
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Developer</span>
+                  <span className="text-gray-500">Developer</span>
                   <span className="font-medium text-gray-800">
                     {project.developerName}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Category</span>
+                  <span className="text-gray-500">Category</span>
                   <span className="font-medium text-gray-800">
                     {project.category}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Region</span>
+                  <span className="text-gray-500">Region</span>
                   <span className="font-medium text-gray-800">
                     {project.region}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Total Land Area</span>
+                  <span className="text-gray-500">Total Land Area</span>
                   <span className="font-medium text-gray-800">
                     {project.totalLandParcel}
                   </span>
@@ -228,25 +231,25 @@ export default function ProjectDetailPage({
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Number of Towers</span>
+                  <span className="text-gray-500">Number of Towers</span>
                   <span className="font-medium text-gray-800">
                     {project.numberOfTowers || "N/A"}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Number of Floors</span>
+                  <span className="text-gray-500">Number of Floors</span>
                   <span className="font-medium text-gray-800">
                     {project.numberOfFloors}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Total Units</span>
+                  <span className="text-gray-500">Total Units</span>
                   <span className="font-medium text-gray-800">
                     {project.totalNumberOfUnits}
                   </span>
                 </div>
                 <div className="flex flex-col">
-                  <span className=" text-gray-500">Possession</span>
+                  <span className="text-gray-500">Possession</span>
                   <span className="font-medium text-gray-800">
                     {project.possessionDate}
                   </span>
@@ -255,47 +258,51 @@ export default function ProjectDetailPage({
             </div>
 
             {/* Available configurations */}
-            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6">
-                Available Configurations
-              </h2>
+            {project.typologyAndSize && project.typologyAndSize.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 className="text-2xl font-bold text-gray-800 mb-6">
+                  Available Configurations
+                </h2>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {project.typologyAndSize.map((config, index) => (
-                  <div
-                    key={index}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-purple-300 transition-colors"
-                  >
-                    <h3 className="font-semibold text-gray-800 mb-2">
-                      {config}
-                    </h3>
-                    <div className="text-gray-500 ">
-                      <p>Starting Price: ₹{project.totalStartingPrice}</p>
-                      <p className="mt-1">₹{project.pricePerSqFt}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {project.typologyAndSize.map((config, index) => (
+                    <div
+                      key={index}
+                      className="border border-gray-200 rounded-lg p-4 hover:border-purple-300 transition-colors"
+                    >
+                      <h3 className="font-semibold text-gray-800 mb-2">
+                        {config}
+                      </h3>
+                      <div className="text-gray-500">
+                        <p>Starting Price: ₹{project.totalStartingPrice}</p>
+                        <p className="mt-1">₹{project.pricePerSqFt}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Project USPs/Highlights */}
-            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6">
-                Project Highlights
-              </h2>
+            {project.projectUSP && project.projectUSP.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 className="text-2xl font-bold text-gray-800 mb-6">
+                  Project Highlights
+                </h2>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {project.projectUSP.map((usp, index) => (
-                  <div key={index} className="flex items-start">
-                    <CheckCircle className="h-5 w-5 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
-                    <span className="text-gray-700">{usp}</span>
-                  </div>
-                ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {project.projectUSP.map((usp, index) => (
+                    <div key={index} className="flex items-start">
+                      <CheckCircle className="h-5 w-5 text-green-500 mr-3 mt-0.5 flex-shrink-0" />
+                      <span className="text-gray-700">{usp}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Nearby landmarks */}
-            {project.nearbyLandmarks.length > 0 && (
+            {project.nearbyLandmarks && project.nearbyLandmarks.length > 0 && (
               <div className="bg-white rounded-lg shadow-md p-6 mb-8">
                 <h2 className="text-2xl font-bold text-gray-800 mb-6">
                   Nearby Landmarks
@@ -313,7 +320,7 @@ export default function ProjectDetailPage({
             )}
 
             {/* Nearby societies */}
-            {project.nearbySocieties.length > 0 && (
+            {project.nearbySocieties && project.nearbySocieties.length > 0 && (
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-2xl font-bold text-gray-800 mb-6">
                   Nearby Societies
@@ -374,7 +381,7 @@ export default function ProjectDetailPage({
                   <span className="text-gray-600 block mb-2">
                     Additional Charges
                   </span>
-                  <span className=" text-gray-700">
+                  <span className="text-gray-700">
                     {project.additionalCharges}
                   </span>
                 </div>
