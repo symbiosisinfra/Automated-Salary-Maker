@@ -26,7 +26,7 @@ export default function ProjectHeader() {
           {/* Description */}
           <p className="text-gray-600 mt-3 max-w-3xl">
             Explore our comprehensive database of residential and commercial
-            real estate projects across prime locations in Delhi NCR.
+            real estate projects across prime locations in Gurugram.
           </p>
         </div>
       </div>

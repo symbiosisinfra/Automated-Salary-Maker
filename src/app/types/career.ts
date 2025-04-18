@@ -118,14 +118,14 @@ export const STATUS_OPTIONS: StatusOption[] = [
   {
     value: "Offer Accepted",
     label: "Offer Accepted",
-    color: "text-emerald-800",
-    bgColor: "bg-emerald-100",
+    color: "text-purple-800",
+    bgColor: "bg-purple-100",
   },
   {
     value: "Hired",
     label: "Hired",
-    color: "text-emerald-900",
-    bgColor: "bg-emerald-200",
+    color: "text-purple-900",
+    bgColor: "bg-purple-200",
   },
   {
     value: "Rejected",
