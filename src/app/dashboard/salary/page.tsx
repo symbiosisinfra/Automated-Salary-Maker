@@ -11,6 +11,9 @@ import {
   Info,
   Users,
   FilePlus,
+  Check,
+  X,
+  Clock,
 } from "lucide-react";
 
 // Types
@@ -21,6 +24,8 @@ interface Employee {
   salary: number;
   attendance: Record<string, DayAttendance>;
   calculation: SalaryCalculation;
+  manualLateBufferDays: string[]; // For late arrivals
+  manualEarlyBufferDays: string[]; // For early departures
 }
 
 interface DayAttendance {
@@ -46,8 +51,11 @@ interface SalaryCalculation {
   clDays: number;
   holidayDays: number;
   totalDeficitMinutes: number;
-  bufferApplied: number;
-  daysWithBuffer: string[];
+  lateBufferApplied: number;
+  earlyBufferApplied: number;
+  totalBufferApplied: number;
+  daysWithLateBuffer: string[];
+  daysWithEarlyBuffer: string[];
   finalDeficit: number;
   perDaySalary: number;
   absentDeduction: number;
@@ -69,14 +77,13 @@ interface SalaryCalculation {
 // Constants
 const EXPECTED_WORK_MINUTES = 510; // 8.5 hours = 510 minutes
 const BUFFER_MINUTES = 15; // 15 minutes buffer per day
-const MAX_BUFFER_DAYS = 3; // 3 days per month
+const MAX_BUFFER_DAYS = 3; // 3 days per month for each type (late/early)
 const DEFAULT_SALARY = 0; // Default salary if not provided
 
 // Office hours constants for logical time correction
 const OFFICE_START_HOUR = 10; // Office starts at 10:00 AM
 const OFFICE_END_HOUR = 18; // Office ends at 18:30 (6:30 PM)
 const OFFICE_END_MINUTE = 30;
-
 
 export default function Home() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -90,10 +97,89 @@ export default function Home() {
   const [year, setYear] = useState<string>("");
   const [employeeFilter, setEmployeeFilter] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
-  // Remove the manualBufferDays state
   const tableRef = useRef<HTMLDivElement>(null);
 
-  // Process file upload with removal of manual buffer selection
+  // Function to toggle late buffer for a specific day
+  const toggleLateBufferForDay = (day: string) => {
+    if (!selectedEmployee) return;
+
+    // Create a copy of the selected employee
+    const updatedEmployee = { ...selectedEmployee };
+
+    // Check if this day is already in the buffer days array
+    const index = updatedEmployee.manualLateBufferDays.indexOf(day);
+
+    if (index === -1) {
+      // If we're already at the max buffer days, don't add more
+      if (updatedEmployee.manualLateBufferDays.length >= MAX_BUFFER_DAYS) {
+        alert(
+          `You can only select up to ${MAX_BUFFER_DAYS} days for late arrival buffer.`
+        );
+        return;
+      }
+
+      // Add the day to buffer days
+      updatedEmployee.manualLateBufferDays.push(day);
+    } else {
+      // Remove the day from buffer days
+      updatedEmployee.manualLateBufferDays.splice(index, 1);
+    }
+
+    // Recalculate the salary with the new buffer days
+    updatedEmployee.calculation = calculateSalary(updatedEmployee);
+
+    // Update the selected employee
+    setSelectedEmployee(updatedEmployee);
+
+    // Update the employee in the employees array
+    const updatedEmployees = employees.map((emp) =>
+      emp.id === updatedEmployee.id ? updatedEmployee : emp
+    );
+
+    setEmployees(updatedEmployees);
+  };
+
+  // Function to toggle early buffer for a specific day
+  const toggleEarlyBufferForDay = (day: string) => {
+    if (!selectedEmployee) return;
+
+    // Create a copy of the selected employee
+    const updatedEmployee = { ...selectedEmployee };
+
+    // Check if this day is already in the buffer days array
+    const index = updatedEmployee.manualEarlyBufferDays.indexOf(day);
+
+    if (index === -1) {
+      // If we're already at the max buffer days, don't add more
+      if (updatedEmployee.manualEarlyBufferDays.length >= MAX_BUFFER_DAYS) {
+        alert(
+          `You can only select up to ${MAX_BUFFER_DAYS} days for early departure buffer.`
+        );
+        return;
+      }
+
+      // Add the day to buffer days
+      updatedEmployee.manualEarlyBufferDays.push(day);
+    } else {
+      // Remove the day from buffer days
+      updatedEmployee.manualEarlyBufferDays.splice(index, 1);
+    }
+
+    // Recalculate the salary with the new buffer days
+    updatedEmployee.calculation = calculateSalary(updatedEmployee);
+
+    // Update the selected employee
+    setSelectedEmployee(updatedEmployee);
+
+    // Update the employee in the employees array
+    const updatedEmployees = employees.map((emp) =>
+      emp.id === updatedEmployee.id ? updatedEmployee : emp
+    );
+
+    setEmployees(updatedEmployees);
+  };
+
+  // Process file upload with manual buffer selection
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -233,7 +319,7 @@ export default function Home() {
     let totalDeficitMinutes = 0;
     let totalExtraMinutes = 0; // For special departments, extra time worked
 
-    Object.values(employee.attendance).forEach((att) => {
+    Object.entries(employee.attendance).forEach(([day, att]) => {
       if (att.status === "Present" && att.inTime && att.outTime) {
         try {
           const inTimeParts = att.inTime.split(":").map(Number);
@@ -289,43 +375,38 @@ export default function Home() {
     // Calculate deduction for absent days
     const absentDeduction = Math.round(perDaySalary * absentDays);
 
-    // AUTOMATED BUFFER APPLICATION LOGIC - ONLY for late arrivals
+    // MANUAL BUFFER APPLICATION LOGIC - for both late arrivals and early departures
     // Only applicable for regular employees, not special departments
-    let bufferApplied = 0;
-    let selectedBufferDays: string[] = [];
+    let lateBufferApplied = 0;
+    let earlyBufferApplied = 0;
 
     if (!isSpecialDepartment) {
-      // Find all days with late arrivals
-      const daysWithLate = Object.entries(employee.attendance)
-        .filter(
-          ([_, att]) =>
-            att.status === "Present" &&
-            att.isLate &&
-            att.lateBy &&
-            att.lateBy > 0
-        )
-        // Sort by late minutes (lowest first)
-        .sort(([_, a], [__, b]) => (a.lateBy || 0) - (b.lateBy || 0));
-
-      // Take up to MAX_BUFFER_DAYS (3) days with the lowest late arrivals
-      selectedBufferDays = daysWithLate
-        .slice(0, MAX_BUFFER_DAYS)
-        .map(([day]) => day);
-
-      // Calculate buffer from the automatically selected days
-      selectedBufferDays.forEach((day) => {
+      // Calculate late buffer from the manually selected days
+      employee.manualLateBufferDays.forEach((day) => {
         if (employee.attendance[day] && employee.attendance[day].isLate) {
           const att = employee.attendance[day];
           // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
-          bufferApplied += Math.min(att.lateBy || 0, BUFFER_MINUTES);
+          lateBufferApplied += Math.min(att.lateBy || 0, BUFFER_MINUTES);
+        }
+      });
+
+      // Calculate early buffer from the manually selected days
+      employee.manualEarlyBufferDays.forEach((day) => {
+        if (employee.attendance[day] && employee.attendance[day].isEarly) {
+          const att = employee.attendance[day];
+          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
+          earlyBufferApplied += Math.min(att.earlyBy || 0, BUFFER_MINUTES);
         }
       });
     }
 
+    // Total buffer applied
+    const totalBufferApplied = lateBufferApplied + earlyBufferApplied;
+
     // Calculate final deficit after buffer for regular employees
     const finalDeficit = isSpecialDepartment
       ? 0
-      : Math.max(0, totalDeficitMinutes - bufferApplied);
+      : Math.max(0, totalDeficitMinutes - totalBufferApplied);
 
     // Calculate per minute rate
     const perMinuteRate =
@@ -372,8 +453,11 @@ export default function Home() {
       clDays,
       holidayDays,
       totalDeficitMinutes,
-      bufferApplied,
-      daysWithBuffer: selectedBufferDays,
+      lateBufferApplied,
+      earlyBufferApplied,
+      totalBufferApplied,
+      daysWithLateBuffer: employee.manualLateBufferDays,
+      daysWithEarlyBuffer: employee.manualEarlyBufferDays,
       finalDeficit,
       perDaySalary,
       absentDeduction,
@@ -391,7 +475,7 @@ export default function Home() {
     };
   };
 
-  // Updated processEmployeeData function to handle mid-month joiners
+  // Updated processEmployeeData function to handle mid-month joiners and include manualBufferDays
   const processEmployeeData = (
     data: any[],
     daysInMonth: number
@@ -525,6 +609,8 @@ export default function Home() {
           department: row["Department"] || "",
           salary: parseSalary(row["Salary"]),
           attendance: {},
+          manualLateBufferDays: [], // Initialize with empty array for late buffer
+          manualEarlyBufferDays: [], // Initialize with empty array for early buffer
           calculation: {
             totalDays: 0,
             workingDays: 0,
@@ -534,8 +620,11 @@ export default function Home() {
             absentDays: 0,
             clDays: 0,
             totalDeficitMinutes: 0,
-            bufferApplied: 0,
-            daysWithBuffer: [],
+            lateBufferApplied: 0,
+            earlyBufferApplied: 0,
+            totalBufferApplied: 0,
+            daysWithLateBuffer: [],
+            daysWithEarlyBuffer: [],
             finalDeficit: 0,
             deduction: 0,
             finalSalary: 0,
@@ -909,8 +998,16 @@ export default function Home() {
           `${selectedEmployee.calculation.totalDeficitMinutes} mins`,
         ]);
         summaryData.push([
-          "Buffer Applied",
-          `${selectedEmployee.calculation.bufferApplied} mins`,
+          "Late Buffer Applied",
+          `${selectedEmployee.calculation.lateBufferApplied} mins`,
+        ]);
+        summaryData.push([
+          "Early Buffer Applied",
+          `${selectedEmployee.calculation.earlyBufferApplied} mins`,
+        ]);
+        summaryData.push([
+          "Total Buffer Applied",
+          `${selectedEmployee.calculation.totalBufferApplied} mins`,
         ]);
         summaryData.push([
           "Final Deficit",
@@ -960,7 +1057,8 @@ export default function Home() {
           "Late (mins)",
           "Early (mins)",
           "Total Deficit",
-          "Buffer Applied",
+          "Late Buffer",
+          "Early Buffer",
         ],
       ];
 
@@ -968,8 +1066,10 @@ export default function Home() {
       Object.entries(selectedEmployee.attendance)
         .sort(([a], [b]) => parseInt(a) - parseInt(b))
         .forEach(([day, att]) => {
-          const isBufferApplied =
-            selectedEmployee.calculation.daysWithBuffer.includes(day);
+          const isLateBufferApplied =
+            selectedEmployee.manualLateBufferDays.includes(day);
+          const isEarlyBufferApplied =
+            selectedEmployee.manualEarlyBufferDays.includes(day);
           const lateMinutes = att.isLate && att.lateBy > 0 ? att.lateBy : 0;
 
           // Handle Kishan's special case for early departures
@@ -1001,7 +1101,8 @@ export default function Home() {
             lateMinutes,
             earlyMinutes,
             isSpecialDepartment ? "-" : totalDeficit, // No deficit for special departments
-            isSpecialDepartment ? "N/A" : isBufferApplied ? "Yes" : "No",
+            isSpecialDepartment ? "N/A" : isLateBufferApplied ? "Yes" : "No",
+            isSpecialDepartment ? "N/A" : isEarlyBufferApplied ? "Yes" : "No",
           ]);
         });
 
@@ -1209,8 +1310,16 @@ export default function Home() {
             `${employee.calculation.totalDeficitMinutes} mins`,
           ]);
           employeeData.push([
-            "Buffer Applied",
-            `${employee.calculation.bufferApplied} mins`,
+            "Late Buffer Applied",
+            `${employee.calculation.lateBufferApplied} mins`,
+          ]);
+          employeeData.push([
+            "Early Buffer Applied",
+            `${employee.calculation.earlyBufferApplied} mins`,
+          ]);
+          employeeData.push([
+            "Total Buffer Applied",
+            `${employee.calculation.totalBufferApplied} mins`,
           ]);
           employeeData.push([
             "Final Deficit",
@@ -1252,15 +1361,18 @@ export default function Home() {
           "Late (mins)",
           "Early (mins)",
           "Total Deficit",
-          "Buffer Applied",
+          "Late Buffer",
+          "Early Buffer",
         ]);
 
-        // Add attendance data
+        // Add attendance data with manual buffer selection
         Object.entries(employee.attendance)
           .sort(([a], [b]) => parseInt(a) - parseInt(b))
           .forEach(([day, att]) => {
-            const isBufferApplied =
-              employee.calculation.daysWithBuffer.includes(day);
+            const isLateBufferApplied =
+              employee.manualLateBufferDays.includes(day);
+            const isEarlyBufferApplied =
+              employee.manualEarlyBufferDays.includes(day);
             const lateMinutes = att.isLate && att.lateBy > 0 ? att.lateBy : 0;
 
             // Handle Kishan's special case for early departures
@@ -1292,7 +1404,8 @@ export default function Home() {
               lateMinutes,
               earlyMinutes,
               isSpecialDepartment ? "-" : totalDeficit, // No deficit for special departments
-              isSpecialDepartment ? "N/A" : isBufferApplied ? "Yes" : "No",
+              isSpecialDepartment ? "N/A" : isLateBufferApplied ? "Yes" : "No",
+              isSpecialDepartment ? "N/A" : isEarlyBufferApplied ? "Yes" : "No",
             ]);
           });
 
@@ -1421,14 +1534,14 @@ export default function Home() {
                 The tool will automatically detect working days in the month
               </li>
               <li>
-                Manually select which late days to apply buffer to (max 3 per
-                employee)
+                Manually select which days to apply buffer for late arrivals and
+                early departures (max 3 of each type per employee)
               </li>
               <li>
                 WFH (Work From Home) and CL (Casual Leave) days are fully paid
                 with no deductions
               </li>
-              <li>Export calculated salary details as Excel or PDF</li>
+              <li>Export calculated salary details as Excel</li>
               <li>Batch export all employees' data with a single click</li>
             </ul>
           </div>
@@ -1686,7 +1799,7 @@ export default function Home() {
                           Buffer Applied
                         </div>
                         <div className="font-medium text-gray-900">
-                          {selectedEmployee.calculation.bufferApplied} mins
+                          {selectedEmployee.calculation.totalBufferApplied} mins
                         </div>
                       </div>
                       <div>
@@ -1759,11 +1872,11 @@ export default function Home() {
 
                 <div className="bg-yellow-50 p-3 mb-4 rounded-lg border border-yellow-200">
                   <p className="text-sm text-yellow-800">
-                    <strong>Automated Buffer Application:</strong> Buffer (up to
-                    15 mins) is automatically applied to up to {MAX_BUFFER_DAYS}{" "}
-                    days with the lowest late minutes. Both late arrivals and
-                    early departures count as deficit minutes, but buffer is
-                    only applied to late arrivals.
+                    <strong>Manual Buffer Selection:</strong> You can apply
+                    buffer (up to 15 mins per day) to a maximum of{" "}
+                    {MAX_BUFFER_DAYS} days for each type (late and early). Check
+                    the boxes to apply buffer to late arrivals and early
+                    departures.
                   </p>
                 </div>
 
@@ -1790,7 +1903,10 @@ export default function Home() {
                           Early By
                         </th>
                         <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
-                          Buffer Status
+                          Late Buffer
+                        </th>
+                        <th className="py-2 px-3 text-left text-sm font-medium text-gray-700">
+                          Early Buffer
                         </th>
                       </tr>
                     </thead>
@@ -1798,27 +1914,49 @@ export default function Home() {
                       {Object.entries(selectedEmployee.attendance)
                         .sort(([a], [b]) => parseInt(a) - parseInt(b))
                         .map(([day, att]) => {
-                          const isBufferApplied =
-                            selectedEmployee.calculation.daysWithBuffer.includes(
+                          const isLateBufferApplied =
+                            selectedEmployee.manualLateBufferDays.includes(day);
+                          const isEarlyBufferApplied =
+                            selectedEmployee.manualEarlyBufferDays.includes(
                               day
                             );
+                          const canApplyLateBuffer =
+                            att.status === "Present" &&
+                            att.isLate &&
+                            att.lateBy &&
+                            att.lateBy > 0;
+                          const canApplyEarlyBuffer =
+                            att.status === "Present" &&
+                            att.isEarly &&
+                            att.earlyBy &&
+                            att.earlyBy > 0;
+
+                          // Colors for row background
+                          let rowBgClass = "";
+                          if (att.status === "Absent") {
+                            rowBgClass = "bg-red-50";
+                          } else if (att.status === "Week Off") {
+                            rowBgClass = "bg-gray-50";
+                          } else if (att.status === "WFH") {
+                            rowBgClass = "bg-blue-50";
+                          } else if (att.status === "CL") {
+                            rowBgClass = "bg-yellow-50";
+                          } else if (
+                            isLateBufferApplied &&
+                            isEarlyBufferApplied
+                          ) {
+                            rowBgClass = "bg-green-100"; // Both buffers applied
+                          } else if (
+                            isLateBufferApplied ||
+                            isEarlyBufferApplied
+                          ) {
+                            rowBgClass = "bg-green-50"; // One buffer applied
+                          }
 
                           return (
                             <tr
                               key={day}
-                              className={`text-gray-900 ${
-                                att.status === "Absent"
-                                  ? "bg-red-50"
-                                  : att.status === "Week Off"
-                                  ? "bg-gray-50"
-                                  : att.status === "WFH"
-                                  ? "bg-blue-50"
-                                  : att.status === "CL"
-                                  ? "bg-yellow-50"
-                                  : isBufferApplied
-                                  ? "bg-green-50"
-                                  : ""
-                              }`}
+                              className={`text-gray-900 ${rowBgClass}`}
                             >
                               <td className="py-2 px-3 text-sm">{att.date}</td>
                               <td className="py-2 px-3 text-sm">
@@ -1865,23 +2003,43 @@ export default function Home() {
                                   : "-"}
                               </td>
                               <td className="py-2 px-3 text-sm">
-                                {att.status === "Present" &&
-                                att.isLate &&
-                                att.lateBy > 0 ? (
-                                  <span
-                                    className={`px-2 py-1 rounded-full text-xs ${
-                                      isBufferApplied
-                                        ? "bg-green-100 text-green-800"
-                                        : "bg-gray-100 text-gray-600"
+                                {canApplyLateBuffer ? (
+                                  <div
+                                    onClick={() => toggleLateBufferForDay(day)}
+                                    className={`inline-flex items-center justify-center w-6 h-6 rounded cursor-pointer 
+                                    ${
+                                      isLateBufferApplied
+                                        ? "bg-green-500 text-white"
+                                        : "bg-gray-200 text-gray-500 hover:bg-gray-300"
                                     }`}
                                   >
-                                    {isBufferApplied
-                                      ? `Buffer Applied (${Math.min(
-                                          att.lateBy,
-                                          BUFFER_MINUTES
-                                        )} mins)`
-                                      : "No Buffer"}
-                                  </span>
+                                    {isLateBufferApplied ? (
+                                      <Check className="w-4 h-4" />
+                                    ) : (
+                                      <span className="text-xs">+</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-sm">
+                                {canApplyEarlyBuffer ? (
+                                  <div
+                                    onClick={() => toggleEarlyBufferForDay(day)}
+                                    className={`inline-flex items-center justify-center w-6 h-6 rounded cursor-pointer 
+                                    ${
+                                      isEarlyBufferApplied
+                                        ? "bg-green-500 text-white"
+                                        : "bg-gray-200 text-gray-500 hover:bg-gray-300"
+                                    }`}
+                                  >
+                                    {isEarlyBufferApplied ? (
+                                      <Check className="w-4 h-4" />
+                                    ) : (
+                                      <span className="text-xs">+</span>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className="text-gray-400">-</span>
                                 )}
