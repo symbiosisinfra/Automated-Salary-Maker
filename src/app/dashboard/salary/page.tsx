@@ -353,11 +353,8 @@ export default function Home() {
             // Adjust late minutes if person worked overtime (after 6:30 PM, max till 6:45 PM)
             if (isLate && outMinutes > expectedOutMinutes) {
               const maxOvertimeMinutes = 15; // Can work max 15 minutes after 6:30 PM (till 6:45 PM)
-              const actualOvertimeMinutes = Math.min(
-                outMinutes - expectedOutMinutes,
-                maxOvertimeMinutes
-              );
-
+              const actualOvertimeMinutes = Math.min(outMinutes - expectedOutMinutes, maxOvertimeMinutes);
+              
               // Reduce late minutes by the overtime worked (but not below 0)
               lateBy = Math.max(0, lateBy - actualOvertimeMinutes);
             }
@@ -397,27 +394,8 @@ export default function Home() {
       employee.manualLateBufferDays.forEach((day) => {
         if (employee.attendance[day] && employee.attendance[day].isLate) {
           const att = employee.attendance[day];
-
-          // Calculate how much overtime this person worked on this day
-          let overtimeWorked = 0;
-          if (att.outTime) {
-            try {
-              const outTimeParts = att.outTime.split(":").map(Number);
-              const outMinutes = outTimeParts[0] * 60 + outTimeParts[1];
-              const expectedOutMinutes =
-                OFFICE_END_HOUR * 60 + OFFICE_END_MINUTE; // 18:30
-
-              if (outMinutes > expectedOutMinutes) {
-                overtimeWorked = Math.min(outMinutes - expectedOutMinutes, 15); // Max 15 mins overtime credit
-              }
-            } catch (error) {
-              overtimeWorked = 0;
-            }
-          }
-
-          // Buffer applied is the overtime worked on this specific day
-          // This gives credit for staying late to compensate for being late
-          lateBufferApplied += overtimeWorked;
+          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
+          lateBufferApplied += Math.min(att.lateBy || 0, BUFFER_MINUTES);
         }
       });
 
@@ -425,7 +403,7 @@ export default function Home() {
       employee.manualEarlyBufferDays.forEach((day) => {
         if (employee.attendance[day] && employee.attendance[day].isEarly) {
           const att = employee.attendance[day];
-          // Apply buffer equal to early minutes, up to 15 minutes per day
+          // Apply up to BUFFER_MINUTES of buffer (15 mins) per day
           earlyBufferApplied += Math.min(att.earlyBy || 0, BUFFER_MINUTES);
         }
       });
@@ -861,11 +839,8 @@ export default function Home() {
                 // Adjust late minutes if person worked overtime (after 6:30 PM, max till 6:45 PM)
                 if (isLate && outMinutes > expectedOutMinutes) {
                   const maxOvertimeMinutes = 15; // Can work max 15 minutes after 6:30 PM (till 6:45 PM)
-                  const actualOvertimeMinutes = Math.min(
-                    outMinutes - expectedOutMinutes,
-                    maxOvertimeMinutes
-                  );
-
+                  const actualOvertimeMinutes = Math.min(outMinutes - expectedOutMinutes, maxOvertimeMinutes);
+                  
                   // Reduce late minutes by the overtime worked (but not below 0)
                   lateBy = Math.max(0, lateBy - actualOvertimeMinutes);
                 }
@@ -1915,21 +1890,11 @@ export default function Home() {
 
                 <div className="bg-yellow-50 p-3 mb-4 rounded-lg border border-yellow-200">
                   <p className="text-sm text-yellow-800">
-                    <strong>Manual Buffer Selection:</strong> Apply buffer to up
-                    to {MAX_BUFFER_DAYS} days of each type. Late buffer =
-                    overtime minutes worked (max 15/day). Early buffer = early
-                    minutes (max 15/day).
-                  </p>
-                  <p className="text-xs text-yellow-700 mt-1">
-                    <strong>Examples:</strong>
-                    <br />
-                    • 10:45 AM → 6:45 PM: 45 late - 15 overtime = 30 mins
-                    deduction
-                    <br />
-                    • 10:10 AM → 6:35 PM: 10 late - 5 overtime = 5 mins
-                    deduction
-                    <br />• 11:00 AM → 6:40 PM: 60 late - 10 overtime = 50 mins
-                    deduction
+                    <strong>Manual Buffer Selection:</strong> You can apply
+                    buffer (up to 15 mins per day) to a maximum of{" "}
+                    {MAX_BUFFER_DAYS} days for each type (late and early). Check
+                    the boxes to apply buffer to late arrivals and early
+                    departures.
                   </p>
                 </div>
 
