@@ -348,16 +348,7 @@ export default function Home() {
             // Regular employees
             // Check if late or early
             const isLate = inMinutes > expectedInMinutes;
-            let lateBy = isLate ? inMinutes - expectedInMinutes : 0;
-
-            // Adjust late minutes if person worked overtime (after 6:30 PM, max till 6:45 PM)
-            if (isLate && outMinutes > expectedOutMinutes) {
-              const maxOvertimeMinutes = 15; // Can work max 15 minutes after 6:30 PM (till 6:45 PM)
-              const actualOvertimeMinutes = Math.min(outMinutes - expectedOutMinutes, maxOvertimeMinutes);
-              
-              // Reduce late minutes by the overtime worked (but not below 0)
-              lateBy = Math.max(0, lateBy - actualOvertimeMinutes);
-            }
+            const lateBy = isLate ? inMinutes - expectedInMinutes : 0;
 
             // Special case for Kishan - no deduction if leaving after 6:00 PM
             const earlyKishanThreshold = (OFFICE_END_HOUR - 0.5) * 60; // 6:00 PM in minutes (18:00)
@@ -433,9 +424,9 @@ export default function Home() {
       specialDepartmentSalary = Math.round(totalWorkedMinutes * perMinuteRate);
     }
 
-    // Check if employee is on PIP and apply 20% additional deduction (changed from 40%)
+    // Check if employee is on PIP and apply 40% additional deduction
     const isPIP = employee.department.toLowerCase().includes("pip");
-    const pipDeduction = isPIP ? Math.round(employee.salary * 0.2) : 0;
+    const pipDeduction = isPIP ? Math.round(employee.salary * 0.4) : 0;
 
     // Total deduction and final salary
     let totalDeduction = 0;
@@ -834,16 +825,7 @@ export default function Home() {
 
                 // Check if late or early
                 const isLate = inMinutes > expectedInMinutes;
-                let lateBy = isLate ? inMinutes - expectedInMinutes : 0;
-
-                // Adjust late minutes if person worked overtime (after 6:30 PM, max till 6:45 PM)
-                if (isLate && outMinutes > expectedOutMinutes) {
-                  const maxOvertimeMinutes = 15; // Can work max 15 minutes after 6:30 PM (till 6:45 PM)
-                  const actualOvertimeMinutes = Math.min(outMinutes - expectedOutMinutes, maxOvertimeMinutes);
-                  
-                  // Reduce late minutes by the overtime worked (but not below 0)
-                  lateBy = Math.max(0, lateBy - actualOvertimeMinutes);
-                }
+                const lateBy = isLate ? inMinutes - expectedInMinutes : 0;
 
                 const isEarly = outMinutes < expectedOutMinutes;
                 const earlyBy = isEarly ? expectedOutMinutes - outMinutes : 0;
@@ -1041,7 +1023,7 @@ export default function Home() {
         // Add PIP deduction if applicable
         if (selectedEmployee.calculation.isPIP) {
           summaryData.push([
-            "PIP Deduction (20%)",
+            "PIP Deduction (40%)",
             `₹${selectedEmployee.calculation.pipDeduction.toLocaleString(
               "en-IN"
             )}`,
@@ -1351,7 +1333,7 @@ export default function Home() {
           // Add PIP deduction if applicable
           if (employee.calculation.isPIP) {
             employeeData.push([
-              "PIP Deduction (20%)",
+              "PIP Deduction (40%)",
               `₹${employee.calculation.pipDeduction.toLocaleString("en-IN")}`,
             ]);
           }
@@ -1844,7 +1826,7 @@ export default function Home() {
                       {selectedEmployee.calculation.isPIP && (
                         <div>
                           <div className="text-sm text-gray-700">
-                            PIP Deduction (20%)
+                            PIP Deduction (40%)
                           </div>
                           <div className="font-medium text-red-700">
                             ₹
