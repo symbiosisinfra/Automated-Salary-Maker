@@ -424,9 +424,9 @@ export default function Home() {
       specialDepartmentSalary = Math.round(totalWorkedMinutes * perMinuteRate);
     }
 
-    // Check if employee is on PIP and apply 40% additional deduction
+    // Check if employee is on PIP and apply 20% additional deduction
     const isPIP = employee.department.toLowerCase().includes("pip");
-    const pipDeduction = isPIP ? Math.round(employee.salary * 0.4) : 0;
+    const pipDeduction = isPIP ? Math.round(employee.salary * 0.2) : 0;
 
     // Total deduction and final salary
     let totalDeduction = 0;
@@ -1023,7 +1023,7 @@ export default function Home() {
         // Add PIP deduction if applicable
         if (selectedEmployee.calculation.isPIP) {
           summaryData.push([
-            "PIP Deduction (40%)",
+            "PIP Deduction (20%)",
             `₹${selectedEmployee.calculation.pipDeduction.toLocaleString(
               "en-IN"
             )}`,
@@ -1333,7 +1333,7 @@ export default function Home() {
           // Add PIP deduction if applicable
           if (employee.calculation.isPIP) {
             employeeData.push([
-              "PIP Deduction (40%)",
+              "PIP Deduction (20%)",
               `₹${employee.calculation.pipDeduction.toLocaleString("en-IN")}`,
             ]);
           }
@@ -1826,7 +1826,7 @@ export default function Home() {
                       {selectedEmployee.calculation.isPIP && (
                         <div>
                           <div className="text-sm text-gray-700">
-                            PIP Deduction (40%)
+                            PIP Deduction (20%)
                           </div>
                           <div className="font-medium text-red-700">
                             ₹
